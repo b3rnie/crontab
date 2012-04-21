@@ -1,0 +1,7 @@
+{application, scheduler,
+ [ {description, "scheduler"}
+ , {vsn, git}
+ , {registered, []}
+ , {applications, [kernel, stdlib]}
+ ]
+}.

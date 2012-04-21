@@ -1,0 +1,6 @@
+* Overview
+Beginning of a task-scheduler.
+Just hacked up the first ideas that came to mind, no idea if it works
+or not.
+
+* eof
