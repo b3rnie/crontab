@@ -34,14 +34,14 @@
 
 %%%_* Code =============================================================
 %%%_ * Types -----------------------------------------------------------
--record(s, { jobs = []
-           , tref
+-record(s, { jobs   :: list()
+           , tref   :: _
            }).
 
 -record(job, { id   :: any()
              , mfa  :: {_,_,_}
-             , next
-             , exp  :: integer()
+             , next :: [_Y,_M,_D,_Hr,_Min]
+             , pid  :: pid() | undefined
              }).
 
 %%%_ * API -------------------------------------------------------------
@@ -70,7 +70,11 @@ handle_call({add, Id, Spec, MFA}, _From, S) ->
     {reply, ok, S};
 
 handle_call({del, Id}, _From, S) ->
-    {reply, ok, S}.
+  case dict:is_key(Id, Jobs0) of
+    true  -> Jobs = dict:erase(Id, Jobs0),
+             {reply, ok, S#s{jobs = Jobs}};
+    false -> {reply, {error, no_such_job}, S}
+  end.
 
 handle_cast(stop, S) ->
     {stop, normal, S}.
@@ -95,7 +99,9 @@ code_change(_OldVsn, S, _Extra) ->
 %%%_ * Internals -------------------------------------------------------
 %% naive search for next runtime
 next_run(Spec, Now) ->
-  expand(Spec, Now).
+  Dates = [Date || [Y,M,D,_,_] = Date <- expand(Spec, Now),
+                   calendar:valid_date(Y,M,D)],
+  lists:dropwhile(fun(Date) -> Date < Now end, lists:sort(Dates)).
 
 expand(Spec, Now) ->
   Start = next(min, fetch(min, Spec), fetch(min, Now)),
@@ -106,20 +112,20 @@ expand([Unit|Units], Spec, Now, Acc) ->
   expand(Units, Spec, Now, [[N|X] || X <- Acc, N <- Nexts]);
 expand([], _Spec, _Now, Acc) -> Acc.
 
-next(min,   "*", 59) -> [0];   %% \
-next(min,   "*",  M) -> [M+1]; %%  | 'minor' optimization
-next(min,   M,    _) -> [M];   %% /
-next(hour,  "*", 23) -> [23, 0];
-next(hour,  "*",  H) -> [H, H+1];
+next(min,   "*", 59) -> [0];
+next(min,   "*",  M) -> [0, M+1];
+next(min,   M,    _) -> [M];
+next(hour,  "*", 23) -> [0, 23];
+next(hour,  "*",  H) -> [0, H, H+1];
 next(hour,  H,    _) -> [H];
-next(day,   "*", 28) -> [28, 29, 1];
-next(day,   "*", 29) -> [29, 30, 1];
-next(day,   "*", 30) -> [30, 31, 1];
-next(day,   "*", 31) -> [31, 1];
-next(day,   "*",  D) -> [D, D+1];
+next(day,   "*", 28) -> [1, 28, 29];
+next(day,   "*", 29) -> [1, 29, 30];
+next(day,   "*", 30) -> [1, 30, 31];
+next(day,   "*", 31) -> [1, 31];
+next(day,   "*",  D) -> [1, D, D+1];
 next(day,   D,    _) -> [D];
-next(month, "*", 12) -> [12, 1];
-next(month, "*",  M) -> [M, M+1];
+next(month, "*", 12) -> [1, 12];
+next(month, "*",  M) -> [1, M, M+1];
 next(month, M,    _) -> [M];
 next(year,  "*",  Y) -> [Y, Y+1, Y+2, Y+3, Y+4];
 next(year,  Y,    _) -> [Y].
@@ -130,42 +136,12 @@ fetch(day,   [_,_,D,_,_]) -> D;
 fetch(month, [_,M,_,_,_]) -> M;
 fetch(year,  [Y,_,_,_,_]) -> Y.
 
-days_in_month(1,     _) -> 31;
-days_in_month(2,  true) -> 29;
-days_in_month(2, false) -> 28;
-days_in_month(3,     _) -> 31;
-days_in_month(4,     _) -> 30;
-days_in_month(5,     _) -> 31;
-days_in_month(6,     _) -> 30;
-days_in_month(7,     _) -> 31;
-days_in_month(8,     _) -> 31;
-days_in_month(9,     _) -> 30;
-days_in_month(10,    _) -> 31;
-days_in_month(11,    _) -> 30;
-days_in_month(12,    _) -> 31.
-
-is_leap_year(Y)
-  when erlang:is_integer(Y),
-       Y >= 0,
-       Y rem 4 =:= 0,
-       Y rem 100 > 0 ->
-    true;
-is_leap_year(Y)
-  when erlang:is_integer(Y),
-       Y rem 400 =:= 0 ->
-    true;
-is_leap_year(Y)
-  when erlang:is_integer(Y) ->
-    false.
-
 %%%_* Tests ============================================================
-
 -ifdef(TEST).
 -include_lib("eunit/include/eunit.hrl").
 next_test() ->
-    {{2010, 1, 2}, {10, 25, 50}} = next({{2010, 1, 1},    {15, 30, 36}},
-                                        {{'*', '*', '*'}, {10, 25, 50}}),
-    ok.
+  [2010,2,2,0,0] = next_run([2010,2,"*","*","*"], [2010,2,1,59,59]),
+  ok.
 
 -else.
 -endif.
