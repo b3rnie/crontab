@@ -5,36 +5,26 @@
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 
 %%%_* Module declaration ===============================================
--module(scheduler).
+-module(scheduler_time).
+
+-compile(no_auto_import, [now/0]).
 
 %%%_* Exports ==========================================================
--export([ add/3
-        , del/1
+-export([ now/0
+        , has_expired/2
         ]).
 
-%%%_* Includes =========================================================
-%%%_* Macros ===========================================================
 %%%_* Code =============================================================
 %%%_ * Types -----------------------------------------------------------
 %%%_ * API -------------------------------------------------------------
-add(Name, Spec, {M,F,A} = MFA)
-  when erlang:is_atom(Id),
-       erlang:is_atom(M),
-       erlang:is_atom(F),
-       erlang:is_list(A) ->
-  case scheduler_spec:parse(Spec) of
-    {ok, Res}    -> scheduler_server:add(Name, Res, MFA);
-    {error, Rsn} -> {error, Rsn}
-  end.
 
-del(Name)
-  when erlang:is_atom(Name) ->
-  scheduler_server:del(Name).
+now() ->
+  {{Year, Month, Day}, {Hour, Minute, _Second}} = calendar:local_time(),
+  [Year, Month, Day, Hour, Minute].
 
 %%%_* Tests ============================================================
 -ifdef(TEST).
 -include_lib("eunit/include/eunit.hrl").
-
 -else.
 -endif.
 

@@ -3,4 +3,14 @@ Beginning of a task-scheduler.
 Just hacked up the first ideas that came to mind, no idea if it works
 or not.
 
+* spec
+[Year, Month, Day, Hour, Min]
+
+Year  = 0..N  | "*"
+Month = 1..12 | "*"
+Day   = 1..31|monday|tuesday|wednesday|thursday|friday|saturday|sunday|
+Hour  = 0..23 | "*"
+Min   = 0..59 | "*"
+
+* Manifest
 * eof
