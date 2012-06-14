@@ -52,10 +52,12 @@ stop()               -> gen_server:cast(?MODULE, stop).
 add(Name, Spec, MFA) -> gen_server:call({add, Name, Spec, MFA}).
 del(Name)            -> gen_server:call({del, Name}).
 
+
 %%%_ * gen_server callbacks --------------------------------------------
 init(_Args) ->
   erlang:process_flag(trap_exit, true),
-  {ok, TRef} = timer:send_interval(?tick, tick),
+  {ok, Tasks} = application:get_env(scheduler, tasks),
+  {ok, TRef}  = timer:send_interval(?tick, tick),
   {ok, #s{tref = TRef}}.
 
 handle_call({add, Name, Spec, MFA}, _From, #s{tasks = Tasks0} = S) ->
@@ -76,21 +78,21 @@ handle_cast(stop, S) ->
 handle_info(tick, #s{tasks = Tasks} = S) ->
   {noreply, S#s{tasks = tick(Tasks)}};
 
-handle_info({'EXIT', Pid, _Rsn}, #s{jobs = Jobs0} = S) ->
-  error_logger:info_msg("~p: ~p", [?MODULE, Rsn]),
-  case lists:keytake(Pid, #job.pid, Jobs0) of
-    {value, #job{pid = Pid} = Job, Jobs} ->
-      {noreply, S#s{jobs = [Job#job{pid = undefined} | Jobs]}};
+handle_info({'EXIT', Pid, _Rsn}, #s{tasks = Tasks0} = S) ->
+  error_logger:info_msg("~p exit msg: ~p", [?MODULE, Rsn]),
+  case lists:keytake(Pid, #task.pid, Tasks0) of
+    {value, #task{pid = Pid} = Task, Tasks} ->
+      {noreply, S#s{tasks = [Task#task{pid = undefined} | Tasks]}};
     false ->
       {noreply, S}
   end;
 
 handle_info(Info, S) ->
-  error_logger:info_msg("~p: ~p", [?MODULE, Info]),
+  error_logger:info_msg("~p info msg: ~p", [?MODULE, Info]),
   {noreply, S}.
 
 terminate(_Rsn, #s{tref = TRef}) ->
-  timer:cancel(TRef),
+  _ = timer:cancel(TRef),
   ok.
 
 code_change(_OldVsn, S, _Extra) ->
@@ -101,14 +103,12 @@ try_add({Name, Spec, MFA}, Tasks) ->
   case lists:keymember(Name, #t.name, Tasks) of
     true  -> {error, task_exists};
     false ->
-      case scheduler_spec:next_run(Spec, scheduler_time:now()) of
-        {ok, Time} ->
-          Task = #task{ name = Name
-                      , spec = Spec
-                      , mfa  = MFA
-                      , next = Time
-                      },
-          {ok, [Task|Tasks]};
+      case scheduler_time:find_next(Spec, scheduler_time:now()) of
+        {ok, Time}   -> {ok, [#task{ name = Name
+                                   , spec = Spec
+                                   , mfa  = MFA
+                                   , next = Time
+                                   } | Tasks]};
         {error, Rsn} -> {error, Rsn}
       end
   end.
@@ -123,25 +123,36 @@ try_del(Name, Tasks0) ->
 
 tick(Tasks) ->
   Now = scheduler_time:now(),
-  F = fun(#task{next = Time} = Task) when Time >= Now -> try_start(Task);
-         (#task{}            = Task)                  -> Task
-      end,
-  lists:map(F, Tasks).
+  lists:foldl(fun(#task{next = Time} = Task, Acc) ->
+                  case scheduler_time:max([Now, Time]) of
+                    Now  -> case start_task(Task) of
+                              {ok, NewTask} -> [NewTask | Acc];
+                              {error, _Rsn} -> Acc
+                            end;
+                    Time -> [Task|Acc]
+                  end
+              end, [], Tasks).
 
-try_start(#task{ spec = Spec
-               , mfa  = {M, F, A}
-               , next = Next
-               , pid = undefined} = Task) ->
-  Pid = proc_lib:spawn_link(M, F, A),
-  case scheduler_spec:next_run(Spec, Next) of
-    {ok, Time}   -> Task#task{pid = Pid, next = Time};
-    {error, Rsn} -> Task#task{pid = Pid, next = undefined}
+start_task(#task{ spec = Spec
+                , mfa  = {M, F, A}
+                , next = Next
+                , pid = undefined} = Task) ->
+  Pid = erlang:spawn_link(M, F, A),
+  case scheduler_time:find_next(Spec, Next) of
+    {ok, Time}   -> {ok, Task#task{pid = Pid, next = Time}};
+    {error, Rsn} -> error_logger:info_msg("~p no next found: ~p~n",
+                                          [?MODULE, Rsn]),
+                    {error, Rsn}
   end;
 try_start(#task{ spec = Spec
                , next = Next} = Task) ->
-  case scheduler_spec:next_run(Spec, Next) of
-    {ok, Time}   -> Task#task{next = Next};
-    {error, Rsn} -> Task#task{next = undefined}
+  error_logger:info_msg("~p not starting, overlapping: ~p~n",
+                        [?MODULE, Name]),
+  case scheduler_time:find_next(Spec, Next) of
+    {ok, Time}   -> {ok, Task#task{next = Time};
+    {error, Rsn} -> error_logger:info_msg("~p no next found: ~p~n",
+                                          [?MODULE, Rsn]),
+                    {error, Rsn}
   end.
 
 %%%_* Tests ============================================================

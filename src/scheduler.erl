@@ -18,12 +18,12 @@
 %%%_ * Types -----------------------------------------------------------
 %%%_ * API -------------------------------------------------------------
 add(Name, Spec, {M,F,A} = MFA)
-  when erlang:is_atom(Id),
+  when erlang:is_atom(Name),
        erlang:is_atom(M),
        erlang:is_atom(F),
        erlang:is_list(A) ->
-  case scheduler_spec:parse(Spec) of
-    {ok, Res}    -> scheduler_server:add(Name, Res, MFA);
+  case scheduler_time:validate_spec(Spec) of
+    ok           -> scheduler_server:add(Name, Spec, MFA);
     {error, Rsn} -> {error, Rsn}
   end.
 

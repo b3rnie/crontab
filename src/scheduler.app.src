@@ -3,5 +3,8 @@
  , {vsn, git}
  , {registered, []}
  , {applications, [kernel, stdlib]}
+ , {env, [ {tasks, []}
+         ]
+   }
  ]
 }.
