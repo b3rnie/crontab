@@ -49,12 +49,13 @@ start_link(Args) ->
   gen_server:start_link({local, ?MODULE}, ?MODULE, Args, []).
 
 stop()               -> gen_server:cast(?MODULE, stop).
-add(Name, Spec, MFA) -> gen_server:call({add, Name, Spec, MFA}).
-del(Name)            -> gen_server:call({del, Name}).
+add(Name, Spec, MFA) -> gen_server:call(?MODULE, {add, Name, Spec, MFA}).
+del(Name)            -> gen_server:call(?MODULE, {del, Name}).
 
 
 %%%_ * gen_server callbacks --------------------------------------------
 init(_Args) ->
+  io:format("test~n"),
   erlang:process_flag(trap_exit, true),
   {ok, TRef}  = timer:send_interval(?tick, tick),
   {ok, #s{tref = TRef}}.

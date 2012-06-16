@@ -1,5 +1,5 @@
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-%%% @doc parse spec, calculate next runtime
+%%% @doc validate spec, calculate next runtime
 %%% @copyright Bjorn Jensen-Urstad 2012
 %%% @end
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
@@ -17,7 +17,6 @@
         ]).
 
 %%%_* Code =============================================================
-%%%_ * Types -----------------------------------------------------------
 %%%_ * API -------------------------------------------------------------
 validate_spec([_,_,_,_,_] = Spec) ->
   try_all(fun do_validate/1, lists:zip(units(), Spec));
@@ -25,7 +24,9 @@ validate_spec(_Spec) ->
   {error, spec_format}.
 
 find_next(Spec, Starttime) ->
-  find_next(Spec, Starttime, units(), []).
+  [Unit|Units] = units(),
+  Start        = next(Unit, fetch(Unit, Spec), fetch(Unit, Starttime)),
+  find_next(Spec, Starttime, Units, lists:map(fun(E) -> [E] end, Start)).
 
 now() ->
   {{Year, Month, Day}, {Hour, Minute, _Second}} = calendar:local_time(),
@@ -35,14 +36,15 @@ max(L) ->
   lists:max(L).
 
 %%%_ * Internal spec validation ----------------------------------------
+%% TODO: Support list of times / unit. ie hour [12,13,14].
 do_validate({_Unit, "*"}) -> ok;
 do_validate({year, Year}) ->
-  case is_integer_range(Year, 0, inf) of
+  case in_range(Year, 0, inf) of
     true  -> ok;
     false -> {error, spec_year}
   end;
 do_validate({month, Month}) ->
-  case is_integer_range(Month, 1, 12) of
+  case in_range(Month, 1, 12) of
     true  -> ok;
     false -> {error, spec_month}
   end;
@@ -54,27 +56,27 @@ do_validate({day, friday})    -> ok;
 do_validate({day, saturday})  -> ok;
 do_validate({day, sunday})    -> ok;
 do_validate({day, Day}) ->
-  case is_integer_range(Day, 1, 31) of
+  case in_range(Day, 1, 31) of
     true  -> ok;
     false -> {error, spec_day}
   end;
 do_validate({hour, Hr}) ->
-  case is_integer_range(Hr, 0, 23) of
+  case in_range(Hr, 0, 23) of
     true  -> ok;
     false -> {error, spec_hour}
   end;
 do_validate({minute, Min}) ->
-  case is_integer_range(Min, 0, 59) of
+  case in_range(Min, 0, 59) of
     true  -> ok;
     false -> {error, spec_minute}
   end.
 
-
-is_integer_range(N,  _Start, _End) when not erlang:is_integer(N) -> false;
-is_integer_range(_N, inf,    inf)                                -> true;
-is_integer_range(N,  inf,    End) when N =< End                  -> true;
-is_integer_range(N,  Start,  inf)  when N >= Start               -> true;
-is_integer_range(N,  Start,  End) -> N >= Start andalso N =< End.
+in_range(N,  _S,  _E ) when not erlang:is_integer(N) -> false;
+in_range(_N, inf, inf)                               -> true;
+in_range(N,  inf, E  ) when N =< E                   -> true;
+in_range(N,  S,   inf) when N >= S                   -> true;
+in_range(N,  S,   E  ) when N>=S, N=<E               -> true;
+in_range(_N, _S,  _E )                               -> false.
 
 try_all(F, [H|T]) ->
   case F(H) of
@@ -84,9 +86,6 @@ try_all(F, [H|T]) ->
 try_all(_F, []) -> ok.
 
 %%%_ * Internal next calculation ---------------------------------------
-find_next(Spec, Starttime, [Unit|Units],  []) ->
-  find_next(Spec, Starttime, Units,
-            [[N] || N <- next(Unit, fetch(Unit, Spec), fetch(Unit, Starttime))]);
 find_next(Spec, Starttime, [Unit|Units], Candidates) ->
   Nexts = next(Unit, fetch(Unit, Spec), fetch(Unit, Starttime)),
   find_next(Spec, Starttime, Units,
@@ -97,11 +96,12 @@ find_next(Spec, Starttime, [], Candidates0) ->
   Fs = [ fun(C) -> filter_invalid_ymd(C) end
        , fun(C) -> filter_invalid_day(C, Spec) end
        , fun(C) -> filter_passed(C, Starttime) end
+       , fun(C) -> lists:sort(C) end
        ],
-  case lists:foldl(fun(Fun, Acc) -> Fun(Acc) end,
+  case lists:foldl(fun(Fun, Acc) -> io:format("Acc: ~p~n", [Acc]), Fun(Acc) end,
                    Candidates0, Fs) of
-    [_|_] = Nexts -> {ok, hd(lists:sort(Nexts))};
-    []            -> {error, no_next_found}
+    [Next|_] -> {ok, Next};
+    []       -> {error, no_next_found}
   end.
 
 filter_invalid_ymd(C) ->
@@ -111,10 +111,11 @@ filter_invalid_ymd(C) ->
 
 filter_invalid_day(C, Spec) ->
   case fetch(day, Spec) of
-    Day when is_integer(Day) -> C;
-    Day -> lists:filter(fun([Y,M,D,_,_]) ->
-                            Day =:= to_day(calendar:day_of_the_week(Y,M,D))
-                        end, C)
+    Day when is_atom(Day) ->
+      lists:filter(fun([Y,M,D,_,_]) ->
+                       Day =:= day_of_the_week(Y, M, D)
+                   end, C);
+    _Day -> C
   end.
 
 filter_passed(C, Starttime) ->
@@ -122,26 +123,24 @@ filter_passed(C, Starttime) ->
                    Date > Starttime
                end, C).
 
-next(year,  "*", Y )  -> [Y, Y+1, Y+2, Y+3, Y+4];
-next(year,  Y,   _ )  -> [Y];
-next(month, "*", 12)  -> [12, 1];
-next(month, "*", M )  -> [M, M+1, 1];
-next(month, M,   _ )  -> [M];
-next(day,   "*", 28)  -> [1, 28, 29];
-next(day,   "*", 29)  -> [1, 29, 30];
-next(day,   "*", 30)  -> [1, 30, 31];
-next(day,   "*", 31)  -> [1, 31];
-next(day,   "*",  D)  -> [1, D, D+1];
-next(day,   S,    D)  -> next_day(S, D);
-next(hour,  "*", 23)  -> [0, 23];
-next(hour,  "*",  H)  -> [0, H, H+1];
-next(hour,  H,    _)  -> [H];
-next(minute, "*", 59) -> [0];
-next(minute, "*",  M) -> [0, M+1];
-next(minute, M,    _) -> [M].
-
-next_day(Spec, Day) when is_integer(Spec) -> [Spec];
-next_day(_Spec, Day) -> lists:seq(1, 31). %% ugly hack for now
+next(year,   "*", Y )                 -> [Y, Y+1, Y+2, Y+3, Y+4];
+next(year,   Y,   _ )                 -> [Y];
+next(month,  "*", 12)                 -> [12, 1];
+next(month,  "*", M )                 -> [M, M+1, 1];
+next(month,  M,   _ )                 -> [M];
+next(day,    "*", 28)                 -> [1, 28, 29];
+next(day,    "*", 29)                 -> [1, 29, 30];
+next(day,    "*", 30)                 -> [1, 30, 31];
+next(day,    "*", 31)                 -> [1, 31];
+next(day,    "*", D )                 -> [1, D, D+1];
+next(day,    S,   _ ) when is_atom(S) -> lists:seq(1, 31); %% TODO
+next(day,    S,   _ )                 -> [S];
+next(hour,   "*", 23)                 -> [0, 23];
+next(hour,   "*", H )                 -> [0, H, H+1];
+next(hour,   H,   _ )                 -> [H];
+next(minute, "*", 59)                 -> [0];
+next(minute, "*", M )                 -> [0, M+1];
+next(minute, M,   _ )                 -> [M].
 
 fetch(year,   [Y,_,_,_,_]) -> Y;
 fetch(month,  [_,M,_,_,_]) -> M;
@@ -151,31 +150,41 @@ fetch(minute, [_,_,_,_,M]) -> M.
 
 units() -> [year, month, day, hour, minute].
 
-to_day(1) -> monday;
-to_day(2) -> tuesday;
-to_day(3) -> wednesday;
-to_day(4) -> thursday;
-to_day(5) -> friday;
-to_day(6) -> saturday;
-to_day(7) -> sunday.
+day_of_the_week(Y, M, D) ->
+  day_of_the_week(calendar:day_of_the_week(Y, M, D)).
+
+day_of_the_week(1) -> monday;
+day_of_the_week(2) -> tuesday;
+day_of_the_week(3) -> wednesday;
+day_of_the_week(4) -> thursday;
+day_of_the_week(5) -> friday;
+day_of_the_week(6) -> saturday;
+day_of_the_week(7) -> sunday.
 
 %%%_* Tests ============================================================
 -ifdef(TEST).
 -include_lib("proper/include/proper.hrl").
 -include_lib("eunit/include/eunit.hrl").
 
-integer_range_test() ->
-  true = is_integer_range(0, -1, 1),
-  true = is_integer_range(0, inf, inf),
-  true = is_integer_range(0, inf, 1),
-  true = is_integer_range(1, -1, inf),
-  false = is_integer_range(5, 0, 4),
-  false = is_integer_range(5, 6, 9),
-  
+in_range_test() ->
+  true  = in_range(0, -1, 1),
+  true  = in_range(0, inf, inf),
+  true  = in_range(0, inf, 1),
+  true  = in_range(1, -1, inf),
+  false = in_range(5, 0, 4),
+  false = in_range(5, 6, 9),
+  false = in_range(x, inf, inf),
+  false = in_range(x, 0, 10),
+  ok.
 
 next_test() ->
-  [2010,2,2,0,0] = next_run([2010,2,"*","*","*"], [2010,2,1,59,59]),
+  lists:foreach(fun({Spec, Now, Expected}) ->
+                    Expected = find_next(Spec, Now)
+                end, tests()),
   ok.
+
+tests() ->
+  [{["*",2,29,20,0], [2012,3,1,0,0], [2016,2,29,20,0]}].
 
 -else.
 -endif.
