@@ -55,7 +55,6 @@ del(Name)            -> gen_server:call(?MODULE, {del, Name}).
 
 %%%_ * gen_server callbacks --------------------------------------------
 init(_Args) ->
-  io:format("test~n"),
   erlang:process_flag(trap_exit, true),
   {ok, TRef}  = timer:send_interval(?tick, tick),
   {ok, #s{tref = TRef}}.
