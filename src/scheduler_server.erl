@@ -39,8 +39,8 @@
 
 -record(task, { name :: atom()
               , spec
-              , mfa  :: {_,_,_}
-              , next :: [_Y,_M,_D,_Hr,_Min]
+              , mfa
+              , next
               , pid  :: pid() | undefined
               }).
 
@@ -56,7 +56,6 @@ del(Name)            -> gen_server:call({del, Name}).
 %%%_ * gen_server callbacks --------------------------------------------
 init(_Args) ->
   erlang:process_flag(trap_exit, true),
-  {ok, Tasks} = application:get_env(scheduler, tasks),
   {ok, TRef}  = timer:send_interval(?tick, tick),
   {ok, #s{tref = TRef}}.
 
@@ -67,7 +66,7 @@ handle_call({add, Name, Spec, MFA}, _From, #s{tasks = Tasks0} = S) ->
   end;
 
 handle_call({del, Name}, _From, #s{tasks = Tasks0} = S) ->
-  case try_del(Name, Tasks) of
+  case try_del(Name, Tasks0) of
     {ok, Tasks}  -> {reply, ok,           S#s{tasks = Tasks}};
     {error, Rsn} -> {reply, {error, Rsn}, S}
   end.
@@ -78,12 +77,15 @@ handle_cast(stop, S) ->
 handle_info(tick, #s{tasks = Tasks} = S) ->
   {noreply, S#s{tasks = tick(Tasks)}};
 
-handle_info({'EXIT', Pid, _Rsn}, #s{tasks = Tasks0} = S) ->
-  error_logger:info_msg("~p exit msg: ~p", [?MODULE, Rsn]),
+handle_info({'EXIT', Pid, Rsn}, #s{tasks = Tasks0} = S) ->
   case lists:keytake(Pid, #task.pid, Tasks0) of
-    {value, #task{pid = Pid} = Task, Tasks} ->
+    {value, #task{name = Name, pid = Pid} = Task, Tasks} ->
+      error_logger:info_msg("~p ~p stopped with reason: ~p",
+                            [?MODULE, Name, Rsn]),
       {noreply, S#s{tasks = [Task#task{pid = undefined} | Tasks]}};
     false ->
+      error_logger:info_msg("~p exit message: ~p",
+                            [?MODULE, Rsn]),
       {noreply, S}
   end;
 
@@ -100,7 +102,7 @@ code_change(_OldVsn, S, _Extra) ->
 
 %%%_ * Internals -------------------------------------------------------
 try_add({Name, Spec, MFA}, Tasks) ->
-  case lists:keymember(Name, #t.name, Tasks) of
+  case lists:keymember(Name, #task.name, Tasks) of
     true  -> {error, task_exists};
     false ->
       case scheduler_time:find_next(Spec, scheduler_time:now()) of
@@ -114,11 +116,11 @@ try_add({Name, Spec, MFA}, Tasks) ->
   end.
 
 try_del(Name, Tasks0) ->
-  case lists:keytake(Name, #t.name, Tasks0) of
-    {value, #t{pid = undefined}, Tasks} -> {ok, Tasks};
-    {value, #t{pid = Pid},       Tasks} -> exit(Pid, stopped),
-                                           {ok, Tasks};
-    false                               -> {ok, Tasks0}
+  case lists:keytake(Name, #task.name, Tasks0) of
+    {value, #task{pid = undefined}, Tasks} -> {ok, Tasks};
+    {value, #task{pid = Pid},       Tasks} -> exit(Pid, stopped),
+                                              {ok, Tasks};
+    false                                  -> {error, no_such_task}
   end.
 
 tick(Tasks) ->
@@ -144,12 +146,13 @@ start_task(#task{ spec = Spec
                                           [?MODULE, Rsn]),
                     {error, Rsn}
   end;
-try_start(#task{ spec = Spec
-               , next = Next} = Task) ->
+start_task(#task{ spec = Spec
+                , next = Next
+                , name = Name} = Task) ->
   error_logger:info_msg("~p not starting, overlapping: ~p~n",
                         [?MODULE, Name]),
   case scheduler_time:find_next(Spec, Next) of
-    {ok, Time}   -> {ok, Task#task{next = Time};
+    {ok, Time}   -> {ok, Task#task{next = Time}};
     {error, Rsn} -> error_logger:info_msg("~p no next found: ~p~n",
                                           [?MODULE, Rsn]),
                     {error, Rsn}

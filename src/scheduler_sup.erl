@@ -1,6 +1,6 @@
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 %%% @doc
-%%% @copyright
+%%% @copyright Bjorn Jensen-Urstad 2012
 %%% @end
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 
@@ -18,6 +18,8 @@ start_link(Args) ->
   supervisor:start_link({local, ?MODULE}, ?MODULE, Args).
 
 init(Args) ->
+  %% with any other restart strategy than this we need to persist
+  %% state somewhere.
   RestartStrategy = {one_for_all, 0, 1},
   Kids = [ {scheduler_server, {scheduler_server, start_link, [Args]},
             permanent, 5000, worker, [scheduler_server]}

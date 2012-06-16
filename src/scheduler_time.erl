@@ -3,11 +3,11 @@
 %%% @copyright Bjorn Jensen-Urstad 2012
 %%% @end
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-katrihyvarinen@hotmail.com
+
 %%%_* Module declaration ===============================================
 -module(scheduler_time).
 -compile(export_all).
--compile(no_auto_import, [now/0]).
+-compile({no_auto_import, [now/0]}).
 
 %%%_* Exports ==========================================================
 -export([ validate_spec/1
@@ -20,12 +20,12 @@ katrihyvarinen@hotmail.com
 %%%_ * Types -----------------------------------------------------------
 %%%_ * API -------------------------------------------------------------
 validate_spec([_,_,_,_,_] = Spec) ->
-  first_fail(fun do_validate/1, lists:zip(units(), Spec));
+  try_all(fun do_validate/1, lists:zip(units(), Spec));
 validate_spec(_Spec) ->
   {error, spec_format}.
 
 find_next(Spec, Starttime) ->
-  find_next(Spec, StarTime, units(), []).
+  find_next(Spec, Starttime, units(), []).
 
 now() ->
   {{Year, Month, Day}, {Hour, Minute, _Second}} = calendar:local_time(),
@@ -76,74 +76,74 @@ is_integer_range(N,  inf,    End) when N =< End                  -> true;
 is_integer_range(N,  Start,  inf)  when N >= Start               -> true;
 is_integer_range(N,  Start,  End) -> N >= Start andalso N =< End.
 
-first_fail(F, [H|T]) ->
+try_all(F, [H|T]) ->
   case F(H) of
-    ok           -> first_fail(F, T);
+    ok           -> try_all(F, T);
     {error, Rsn} -> {error, Rsn}
   end;
-first_fail(_F, []) -> ok.
+try_all(_F, []) -> ok.
 
 %%%_ * Internal next calculation ---------------------------------------
-%% + 1 least significant until a match is found
-find_next(Spec, Starttime, [Unit|Units], Acc) ->
-  Next = next(Unit, Spec, Starttime),
-  find_next(Spec, Starttime, Units, Next, Acc).
-find_next(Spec, Starttime, Units, Next, Acc) ->
-  find_next(Spec, Starttime, Units, Next, [N|Acc]);
+find_next(Spec, Starttime, [Unit|Units],  []) ->
+  find_next(Spec, Starttime, Units,
+            [[N] || N <- next(Unit, fetch(Unit, Spec), fetch(Unit, Starttime))]);
+find_next(Spec, Starttime, [Unit|Units], Candidates) ->
+  Nexts = next(Unit, fetch(Unit, Spec), fetch(Unit, Starttime)),
+  find_next(Spec, Starttime, Units,
+            [Candidate ++ [Next] || Candidate <- Candidates,
+                                    Next      <- Nexts]);
+find_next(Spec, Starttime, [], Candidates0) ->
+  io:format("Candidates0: ~p~n", [Candidates0]),
+  Fs = [ fun(C) -> filter_invalid_ymd(C) end
+       , fun(C) -> filter_invalid_day(C, Spec) end
+       , fun(C) -> filter_passed(C, Starttime) end
+       ],
+  case lists:foldl(fun(Fun, Acc) -> Fun(Acc) end,
+                   Candidates0, Fs) of
+    [_|_] = Nexts -> {ok, hd(lists:sort(Nexts))};
+    []            -> {error, no_next_found}
+  end.
 
+filter_invalid_ymd(C) ->
+  lists:filter(fun([Y,M,D,_,_]) ->
+                   calendar:valid_date(Y,M,D)
+               end, C).
 
+filter_invalid_day(C, Spec) ->
+  %% FIXME
+  C.
 
-is_valid_match(Time, Starttime) when Time =< Starttime -> false;
-is_valid_match(Time, Starttime) ->
-  calendar:valid_date(Y, M, D),
-  calendar:day_of_week(Y, M, D),
-  
+filter_passed(C, Starttime) ->
+  lists:filter(fun(Date) ->
+                   Date > Starttime
+               end, C).
 
-next_time(Spec, StartTime, [Unit|Units], Res) ->
-  fetch(Unit, Spec),
-  fetch(Unit, StartTime),
-  
-
-next_run(Spec, Now) ->
-  Dates = [Date || [Y,M,D,_,_] = Date <- expand(Spec, Now),
-                   calendar:valid_date(Y,M,D)],
-  lists:dropwhile(fun(Date) -> Date < Now end, lists:sort(Dates)).
-
-expand(Spec, Now) ->
-  Start = next(min, fetch(min, Spec), fetch(min, Now)),
-  expand([hour, day, month, year], Spec, Now, [Start]).
-
-expand([Unit|Units], Spec, Now, Acc) ->
-  Nexts = next(Unit, fetch(Unit, Spec), fetch(Unit, Now)),
-  expand(Units, Spec, Now, [[N|X] || X <- Acc, N <- Nexts]);
-expand([], _Spec, _Now, Acc) -> Acc.
-
-next(year,  "*", Y ) -> [Y, Y+1, Y+2, Y+3, Y+4];
-next(year,  Y,   _ ) -> [Y];
-next(month, "*", 12) -> [12, 1];
-next(month, "*", M ) -> [M, M+1, 1];
-next(month, M,   _ ) -> [M];
-next(day,   "*", 28) -> [1, 28, 29];
-next(day,   "*", 29) -> [1, 29, 30];
-next(day,   "*", 30) -> [1, 30, 31];
-next(day,   "*", 31) -> [1, 31];
-next(day,   "*",  D) -> [1, D, D+1];
-next(day,   S,    D) -> next_day(S, D);
-next(hour,  "*", 23) -> [0, 23];
-next(hour,  "*",  H) -> [0, H, H+1];
-next(hour,  H,    _) -> [H];
+next(year,  "*", Y )  -> [Y, Y+1, Y+2, Y+3, Y+4];
+next(year,  Y,   _ )  -> [Y];
+next(month, "*", 12)  -> [12, 1];
+next(month, "*", M )  -> [M, M+1, 1];
+next(month, M,   _ )  -> [M];
+next(day,   "*", 28)  -> [1, 28, 29];
+next(day,   "*", 29)  -> [1, 29, 30];
+next(day,   "*", 30)  -> [1, 30, 31];
+next(day,   "*", 31)  -> [1, 31];
+next(day,   "*",  D)  -> [1, D, D+1];
+next(day,   S,    D)  -> next_day(S, D);
+next(hour,  "*", 23)  -> [0, 23];
+next(hour,  "*",  H)  -> [0, H, H+1];
+next(hour,  H,    _)  -> [H];
 next(minute, "*", 59) -> [0];
 next(minute, "*",  M) -> [0, M+1];
-next(minute, M,    _) -> [M];
+next(minute, M,    _) -> [M].
 
-next_day(Spec, Day) when is_integer(Spec) -> [Day];
+next_day(Spec, Day) when is_integer(Spec) -> [Spec];
 next_day(_Spec, Day) -> lists:seq(1, 31). %% ugly hack for now
 
-fetch(year,   [Y,_,_,_,_]) -> Y.
+fetch(year,   [Y,_,_,_,_]) -> Y;
 fetch(month,  [_,M,_,_,_]) -> M;
 fetch(day,    [_,_,D,_,_]) -> D;
 fetch(hour,   [_,_,_,H,_]) -> H;
-fetch(minute, [_,_,_,_,M]) -> M;
+fetch(minute, [_,_,_,_,M]) -> M.
 
 units() -> [year, month, day, hour, minute].
 
