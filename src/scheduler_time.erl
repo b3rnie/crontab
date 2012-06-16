@@ -110,8 +110,12 @@ filter_invalid_ymd(C) ->
                end, C).
 
 filter_invalid_day(C, Spec) ->
-  %% FIXME
-  C.
+  case fetch(day, Spec) of
+    Day when is_integer(Day) -> C;
+    Day -> lists:filter(fun([Y,M,D,_,_]) ->
+                            Day =:= to_day(calendar:day_of_the_week(Y,M,D))
+                        end, C)
+  end.
 
 filter_passed(C, Starttime) ->
   lists:filter(fun(Date) ->
@@ -146,6 +150,14 @@ fetch(hour,   [_,_,_,H,_]) -> H;
 fetch(minute, [_,_,_,_,M]) -> M.
 
 units() -> [year, month, day, hour, minute].
+
+to_day(1) -> monday;
+to_day(2) -> tuesday;
+to_day(3) -> wednesday;
+to_day(4) -> thursday;
+to_day(5) -> friday;
+to_day(6) -> saturday;
+to_day(7) -> sunday.
 
 %%%_* Tests ============================================================
 -ifdef(TEST).
