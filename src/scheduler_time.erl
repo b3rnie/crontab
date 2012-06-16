@@ -98,21 +98,23 @@ find_next(Spec, Starttime, [], Candidates0) ->
        , fun(C) -> filter_passed(C, Starttime) end
        , fun(C) -> lists:sort(C) end
        ],
-  case lists:foldl(fun(Fun, Acc) -> io:format("Acc: ~p~n", [Acc]), Fun(Acc) end,
+  case lists:foldl(fun(Fun, Acc) -> Fun(Acc) end,
                    Candidates0, Fs) of
     [Next|_] -> {ok, Next};
     []       -> {error, no_next_found}
   end.
 
 filter_invalid_ymd(C) ->
-  lists:filter(fun([Y,M,D,_,_]) ->
-                   calendar:valid_date(Y,M,D)
+  lists:filter(fun(E) ->
+                   [Y, M, D] = fetch([year, month, day], E),
+                   calendar:valid_date(Y, M, D)
                end, C).
 
 filter_invalid_day(C, Spec) ->
   case fetch(day, Spec) of
     Day when is_atom(Day) ->
-      lists:filter(fun([Y,M,D,_,_]) ->
+      lists:filter(fun(E) ->
+                       [Y, M, D] = fetch([year, month, day], E),
                        Day =:= day_of_the_week(Y, M, D)
                    end, C);
     _Day -> C
@@ -142,11 +144,12 @@ next(minute, "*", 59)                 -> [0];
 next(minute, "*", M )                 -> [0, M+1];
 next(minute, M,   _ )                 -> [M].
 
-fetch(year,   [Y,_,_,_,_]) -> Y;
-fetch(month,  [_,M,_,_,_]) -> M;
-fetch(day,    [_,_,D,_,_]) -> D;
-fetch(hour,   [_,_,_,H,_]) -> H;
-fetch(minute, [_,_,_,_,M]) -> M.
+fetch(year,   [Y,_,_,_,_]    ) -> Y;
+fetch(month,  [_,M,_,_,_]    ) -> M;
+fetch(day,    [_,_,D,_,_]    ) -> D;
+fetch(hour,   [_,_,_,H,_]    ) -> H;
+fetch(minute, [_,_,_,_,M]    ) -> M;
+fetch(L,      [_,_,_,_,_] = S) -> [fetch(Unit, S) || Unit <- L].
 
 units() -> [year, month, day, hour, minute].
 
