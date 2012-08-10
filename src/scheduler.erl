@@ -35,6 +35,27 @@ del(Name)
 -ifdef(TEST).
 -include_lib("eunit/include/eunit.hrl").
 
+start_stop_test() ->
+  ok = application:start(scheduler),
+  ok = application:stop(scheduler),
+  ok = application:start(scheduler),
+  ok = application:stop(scheduler).
+
+add_del_test() ->
+  ok   = application:start(scheduler),
+  Spec = ["*", "*", "*", "*", "*"],
+  Mfa  = {m, f, []},
+  ok = scheduler:add(foo, Spec, Mfa),
+  ok = scheduler:add(bar, Spec, Mfa),
+  ok = scheduler:add(baz, Spec, Mfa),
+  ok = scheduler:del(foo),
+  ok = scheduler:del(bar),
+  ok = scheduler:del(baz),
+  {error, no_such_task} = scheduler:del(foo),
+  {error, no_such_task} = scheduler:del(bar),
+  {error, no_such_task} = scheduler:del(baz),
+  ok = application:stop(scheduler).
+
 -else.
 -endif.
 

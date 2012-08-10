@@ -169,7 +169,7 @@ day_of_the_week(7) -> sunday.
 
 %%%_* Tests ============================================================
 -ifdef(TEST).
--include_lib("proper/include/proper.hrl").
+%% -include_lib("proper/include/proper.hrl").
 -include_lib("eunit/include/eunit.hrl").
 
 in_range_test() ->
@@ -185,11 +185,12 @@ in_range_test() ->
 
 next_test() ->
   lists:foreach(fun({Spec, Now, Expected}) ->
-                    Expected = find_next(Spec, Now)
+                    {ok, Expected} = find_next(Spec, Now)
                 end, tests()),
   ok.
 
 tests() ->
+  %% {Spec, Now, Expected}
   [{["*",2,29,20,0], [2012,3,1,0,0], [2016,2,29,20,0]}].
 
 -else.

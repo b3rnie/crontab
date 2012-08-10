@@ -35,9 +35,9 @@
 
 %%%_* Code =============================================================
 %%%_ * Types -----------------------------------------------------------
--record(s, { tasks    = dict:new()    %% {name, {spec, mfa, next}}
-           , queue    = gb_tree:new() %% {time, name}
-           , running  = dict:new()    %% {pid,  name} | {name, pid}
+-record(s, { tasks    = dict:new()       %% {name, {spec, mfa, next}}
+           , queue    = gb_trees:empty() %% {time, name}
+           , running  = dict:new()       %% {pid,  name} | {name, pid}
            , tref
            }).
 
@@ -65,6 +65,7 @@ terminate(_Rsn, #s{tref=TRef} = _S) ->
   ok.
 
 handle_call({add, Name, Spec, Mfa}, _From, S) ->
+  ?debug("adding ~p", [Name]),
   case do_add({Name, Spec, Mfa}, S#s.tasks, S#s.queue) of
     {ok, {Tasks, Queue}} -> {reply, ok, S#s{tasks=Tasks, queue=Queue}};
     {error, Rsn}         -> {reply, {error, Rsn}, S}
