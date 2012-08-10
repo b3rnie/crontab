@@ -41,6 +41,9 @@ start_stop_test() ->
   ok = application:start(scheduler),
   ok = application:stop(scheduler).
 
+bad_spec_test() ->
+  {error, spec_format} = scheduler:add(foo, bar, {m,f,[]}).
+
 add_del_test() ->
   ok   = application:start(scheduler),
   Spec = ["*", "*", "*", "*", "*"],
