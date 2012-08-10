@@ -1,9 +1,9 @@
 {application, scheduler,
- [ {description, "scheduler"}
- , {vsn, git}
- , {registered, []}
+ [ {description,  "scheduler"}
+ , {vsn,          git}
+ , {registered,   []}
  , {applications, [kernel, stdlib]}
- , {mod, {scheduler_app, []}}
- , {env, []}
+ , {mod,          {scheduler_app, []}}
+ , {env,          []}
  ]
 }.

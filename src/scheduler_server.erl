@@ -16,10 +16,10 @@
         ]).
 
 -export([ init/1
+        , terminate/2
         , handle_call/3
         , handle_cast/2
         , handle_info/2
-        , terminate/2
         , code_change/3
         ]).
 
@@ -28,20 +28,22 @@
              ]).
 
 %%%_* Includes =========================================================
+-include_lib("scheduler/include/scheduler.hrl").
+
 %%%_* Macros ===========================================================
 -define(tick, 1000).
 
 %%%_* Code =============================================================
 %%%_ * Types -----------------------------------------------------------
--record(s, { tasks = []
-           , tref  = undefined
+-record(s, { tasks    = dict:new()    %% {name, {spec, mfa, next}}
+           , queue    = gb_tree:new() %% {time, name}
+           , running  = dict:new()    %% {pid,  name} | {name, pid}
+           , tref
            }).
 
--record(task, { name :: atom()
-              , spec
+-record(task, { spec
               , mfa
               , next
-              , pid  :: pid() | undefined
               }).
 
 %%%_ * API -------------------------------------------------------------
@@ -49,113 +51,118 @@ start_link(Args) ->
   gen_server:start_link({local, ?MODULE}, ?MODULE, Args, []).
 
 stop()               -> gen_server:cast(?MODULE, stop).
-add(Name, Spec, MFA) -> gen_server:call(?MODULE, {add, Name, Spec, MFA}).
+add(Name, Spec, Mfa) -> gen_server:call(?MODULE, {add, Name, Spec, Mfa}).
 del(Name)            -> gen_server:call(?MODULE, {del, Name}).
-
 
 %%%_ * gen_server callbacks --------------------------------------------
 init(_Args) ->
   erlang:process_flag(trap_exit, true),
-  {ok, TRef}  = timer:send_interval(?tick, tick),
-  {ok, #s{tref = TRef}}.
+  {ok, TRef} = timer:send_interval(?tick, tick),
+  {ok, #s{tref=TRef}}.
 
-handle_call({add, Name, Spec, MFA}, _From, #s{tasks = Tasks0} = S) ->
-  case try_add({Name, Spec, MFA}, Tasks0) of
-    {ok, Tasks}  -> {reply, ok,           S#s{tasks = Tasks}};
-    {error, Rsn} -> {reply, {error, Rsn}, S}
+terminate(_Rsn, #s{tref=TRef} = _S) ->
+  timer:cancel(TRef),
+  ok.
+
+handle_call({add, Name, Spec, Mfa}, _From, S) ->
+  case do_add({Name, Spec, Mfa}, S#s.tasks, S#s.queue) of
+    {ok, {Tasks, Queue}} -> {reply, ok, S#s{tasks=Tasks, queue=Queue}};
+    {error, Rsn}         -> {reply, {error, Rsn}, S}
   end;
 
-handle_call({del, Name}, _From, #s{tasks = Tasks0} = S) ->
-  case try_del(Name, Tasks0) of
-    {ok, Tasks}  -> {reply, ok,           S#s{tasks = Tasks}};
-    {error, Rsn} -> {reply, {error, Rsn}, S}
+handle_call({del, Name}, _From, S) ->
+  case do_del(Name, S#s.tasks, S#s.queue) of
+    {ok, {Tasks, Queue}} -> {reply, ok, S#s{tasks=Tasks, queue=Queue}};
+    {error, Rsn}         -> {reply, {error, Rsn}, S}
   end.
 
 handle_cast(stop, S) ->
     {stop, normal, S}.
 
-handle_info(tick, #s{tasks = Tasks} = S) ->
-  {noreply, S#s{tasks = tick(Tasks)}};
+handle_info(tick, S) ->
+  {noreply, do_tick(S)};
 
-handle_info({'EXIT', Pid, Rsn}, #s{tasks = Tasks0} = S) ->
-  case lists:keytake(Pid, #task.pid, Tasks0) of
-    {value, #task{name = Name, pid = Pid} = Task, Tasks} ->
-      error_logger:info_msg("~p ~p stopped with reason: ~p",
-                            [?MODULE, Name, Rsn]),
-      {noreply, S#s{tasks = [Task#task{pid = undefined} | Tasks]}};
-    false ->
-      error_logger:info_msg("~p exit message: ~p",
-                            [?MODULE, Rsn]),
-      {noreply, S}
-  end;
+handle_info({'EXIT', Pid, Rsn}, #s{running=Running0} = S) ->
+  Name     = dict:fetch(Pid, Running0),
+  Running1 = dict:erase(Pid, Running0),
+  Running  = dict:erase(Name, Running1),
+  ?warning("task ~p exited: ~p", [Name, Rsn]),
+  {noreply, S#s{running=Running}};
 
-handle_info(Info, S) ->
-  error_logger:info_msg("~p info msg: ~p", [?MODULE, Info]),
+handle_info(Msg, S) ->
+  ?warning("~p", [Msg]),
   {noreply, S}.
-
-terminate(_Rsn, #s{tref = TRef}) ->
-  _ = timer:cancel(TRef),
-  ok.
 
 code_change(_OldVsn, S, _Extra) ->
   {ok, S}.
 
 %%%_ * Internals -------------------------------------------------------
-try_add({Name, Spec, MFA}, Tasks) ->
-  case lists:keymember(Name, #task.name, Tasks) of
+do_add({Name, Spec, Mfa}, Tasks0, Queue0) ->
+  case dict:is_key(Name, Tasks0) of
     true  -> {error, task_exists};
     false ->
       case scheduler_time:find_next(Spec, scheduler_time:now()) of
-        {ok, Time}   -> {ok, [#task{ name = Name
-                                   , spec = Spec
-                                   , mfa  = MFA
-                                   , next = Time
-                                   } | Tasks]};
-        {error, Rsn} -> {error, Rsn}
+        {ok, Time} ->
+          Task  = #task{spec=Spec, mfa=Mfa, next=Time},
+          Tasks = dict:store(Name, Task, Tasks0),
+          Queue = gb_trees:insert({Time, Name}, Name, Queue0),
+          {ok, {Tasks, Queue}};
+        {error, Rsn} ->
+          {error, Rsn}
       end
   end.
 
-try_del(Name, Tasks0) ->
-  case lists:keytake(Name, #task.name, Tasks0) of
-    {value, #task{pid = undefined}, Tasks} -> {ok, Tasks};
-    {value, #task{pid = Pid},       Tasks} -> exit(Pid, stopped),
-                                              {ok, Tasks};
-    false                                  -> {error, no_such_task}
+do_del(Name, Tasks0, Queue0) ->
+  case dict:find(Name, Tasks0) of
+    {ok, #task{next=undefined}} ->
+      {ok, {dict:erase(Name, Tasks0), Queue0}};
+    {ok, #task{next=Next}} ->
+      Tasks = dict:erase(Name, Tasks0),
+      Queue = gb_trees:delete({Next, Name}, Queue0),
+      {ok, {Tasks, Queue}};
+    error ->
+      {error, no_such_task}
   end.
 
-tick(Tasks) ->
-  Now = scheduler_time:now(),
-  lists:foldl(fun(#task{next = Time} = Task, Acc) ->
-                  case scheduler_time:max([Now, Time]) of
-                    Now  -> case start_task(Task) of
-                              {ok, NewTask} -> [NewTask | Acc];
-                              {error, _Rsn} -> Acc
-                            end;
-                    Time -> [Task|Acc]
-                  end
-              end, [], Tasks).
+do_tick(S) ->
+  case gb_trees:size(S#s.queue) of
+    0 -> S;
+    _ -> Now = scheduler_time:now(),
+         case gb_trees:take_smallest(S#s.queue) of
+           {{Time, Name}, Name, Queue0}
+             when Time =< Now ->
+             Task           = dict:fetch(Name, S#s.tasks),
+             Running        = try_start(Name, Task, S#s.running),
+             {Tasks, Queue} = try_schedule(Name, Task, S#s.tasks, Queue0),
+             do_tick(S#s{running=Running, queue=Queue, tasks=Tasks});
+           {{_Time, _Name}, _Name, _Qeueu} ->
+             S
+         end
+  end.
 
-start_task(#task{ spec = Spec
-                , mfa  = {M, F, A}
-                , next = Next
-                , pid = undefined} = Task) ->
-  Pid = erlang:spawn_link(M, F, A),
-  case scheduler_time:find_next(Spec, Next) of
-    {ok, Time}   -> {ok, Task#task{pid = Pid, next = Time}};
-    {error, Rsn} -> error_logger:info_msg("~p no next found: ~p~n",
-                                          [?MODULE, Rsn]),
-                    {error, Rsn}
-  end;
-start_task(#task{ spec = Spec
-                , next = Next
-                , name = Name} = Task) ->
-  error_logger:info_msg("~p not starting, overlapping: ~p~n",
-                        [?MODULE, Name]),
-  case scheduler_time:find_next(Spec, Next) of
-    {ok, Time}   -> {ok, Task#task{next = Time}};
-    {error, Rsn} -> error_logger:info_msg("~p no next found: ~p~n",
-                                          [?MODULE, Rsn]),
-                    {error, Rsn}
+try_start(Name, Task, Running0) ->
+  case dict:is_key(Name, Running0) of
+    true ->
+      ?warning("overlapping task, not starting"),
+      Running0;
+    false ->
+      ?debug("starting ~p", [Name]),
+      {M,F,A} = Task#task.mfa,
+      Pid = erlang:spawn_link(M, F, A),
+      Running1 = dict:store(Pid, Name, Running0),
+      _Running = dict:store(Name, Pid, Running1)
+  end.
+
+try_schedule(Name, Task, Tasks0, Queue0) ->
+  case scheduler_time:find_next(Task#task.spec, Task#task.next) of
+    {ok, Time} ->
+      ?debug("scheduling ~p: ~p", [Name, Time]),
+      Tasks = dict:insert(Name, Task#task{next=Time}, Tasks0),
+      Queue = gb_trees:insert({Time, Name}, Name, Queue0),
+      {Tasks, Queue};
+    {error, Rsn} ->
+      ?debug("unable to schedule ~p: ~p", [Name, Rsn]),
+      {dict:insert(Name, Task#task{next=undefined}, Tasks0), Queue0}
   end.
 
 %%%_* Tests ============================================================

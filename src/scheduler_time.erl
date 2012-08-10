@@ -16,6 +16,9 @@
         , max/1
         ]).
 
+%%%_* Includes =========================================================
+-include_lib("scheduler/include/scheduler.hrl").
+
 %%%_* Code =============================================================
 %%%_ * API -------------------------------------------------------------
 validate_spec([_,_,_,_,_] = Spec) ->
@@ -92,7 +95,7 @@ find_next(Spec, Starttime, [Unit|Units], Candidates) ->
             [Candidate ++ [Next] || Candidate <- Candidates,
                                     Next      <- Nexts]);
 find_next(Spec, Starttime, [], Candidates0) ->
-  io:format("Candidates0: ~p~n", [Candidates0]),
+  ?debug("candidates: ~p", [Candidates0]),
   Fs = [ fun(C) -> filter_invalid_ymd(C) end
        , fun(C) -> filter_invalid_day(C, Spec) end
        , fun(C) -> filter_passed(C, Starttime) end
