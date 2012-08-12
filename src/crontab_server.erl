@@ -5,7 +5,7 @@
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 
 %%%_* Module declaration ===============================================
--module(scheduler_server).
+-module(crontab_server).
 -behaviour(gen_server).
 
 %%%_* Exports ==========================================================
@@ -28,31 +28,40 @@
              ]).
 
 %%%_* Includes =========================================================
--include_lib("scheduler/include/scheduler.hrl").
+-include_lib("crontab/include/crontab.hrl").
 
 %%%_* Macros ===========================================================
 -define(tick, 1000).
 
 %%%_* Code =============================================================
 %%%_ * Types -----------------------------------------------------------
--record(s, { tasks    = dict:new()       %% {name, {spec, mfa, next}}
-           , queue    = gb_trees:empty() %% {time, name}
-           , running  = dict:new()       %% {pid,  name} | {name, pid}
+-record(s, { tasks    = dict:new()       %% {k:name, v:#task{}}
+           , queue    = gb_trees:empty() %% {k:{time, name}, v:name
+           , running  = dict:new()       %% {k:pid, v:name} | {k:name, v:pid}
            , tref
            }).
 
 -record(task, { spec
               , mfa
               , next
+              , options
               }).
 
 %%%_ * API -------------------------------------------------------------
 start_link(Args) ->
   gen_server:start_link({local, ?MODULE}, ?MODULE, Args, []).
 
-stop()               -> gen_server:cast(?MODULE, stop).
-add(Name, Spec, Mfa) -> gen_server:call(?MODULE, {add, Name, Spec, Mfa}).
-del(Name)            -> gen_server:call(?MODULE, {del, Name}).
+stop() ->
+  gen_server:cast(?MODULE, stop).
+
+add(Name, Spec, MFA) ->
+  add(Name, Spec, MFA, []).
+
+add(Name, Spec, MFA, Options) ->
+  gen_server:call(?MODULE, {add, Name, Spec, MFA, Options}).
+
+del(Name) ->
+  gen_server:call(?MODULE, {del, Name}).
 
 %%%_ * gen_server callbacks --------------------------------------------
 init(_Args) ->
@@ -64,14 +73,15 @@ terminate(_Rsn, #s{tref=TRef} = _S) ->
   timer:cancel(TRef),
   ok.
 
-handle_call({add, Name, Spec, Mfa}, _From, S) ->
-  ?debug("adding ~p", [Name]),
-  case do_add({Name, Spec, Mfa}, S#s.tasks, S#s.queue) of
+handle_call({add, Name, Spec, MFA, Options}, _From, S) ->
+  ?debug("adding task ~p", [Name]),
+  case do_add({Name, Spec, MFA, Options}, S#s.tasks, S#s.queue) of
     {ok, {Tasks, Queue}} -> {reply, ok, S#s{tasks=Tasks, queue=Queue}};
     {error, Rsn}         -> {reply, {error, Rsn}, S}
   end;
 
 handle_call({del, Name}, _From, S) ->
+  ?debug("deleting task ~p", [Name]),
   case do_del(Name, S#s.tasks, S#s.queue) of
     {ok, {Tasks, Queue}} -> {reply, ok, S#s{tasks=Tasks, queue=Queue}};
     {error, Rsn}         -> {reply, {error, Rsn}, S}
@@ -87,7 +97,7 @@ handle_info({'EXIT', Pid, Rsn}, #s{running=Running0} = S) ->
   Name     = dict:fetch(Pid, Running0),
   Running1 = dict:erase(Pid, Running0),
   Running  = dict:erase(Name, Running1),
-  ?warning("task ~p exited: ~p", [Name, Rsn]),
+  ?warning("task ~p done: ~p", [Name, Rsn]),
   {noreply, S#s{running=Running}};
 
 handle_info(Msg, S) ->
@@ -98,13 +108,13 @@ code_change(_OldVsn, S, _Extra) ->
   {ok, S}.
 
 %%%_ * Internals -------------------------------------------------------
-do_add({Name, Spec, Mfa}, Tasks0, Queue0) ->
+do_add({Name, Spec, Mfa, Options}, Tasks0, Queue0) ->
   case dict:is_key(Name, Tasks0) of
     true  -> {error, task_exists};
     false ->
-      case scheduler_time:find_next(Spec, scheduler_time:now()) of
+      case crontab_time:find_next(Spec, crontab_time:now()) of
         {ok, Time} ->
-          Task  = #task{spec=Spec, mfa=Mfa, next=Time},
+          Task  = #task{spec=Spec, mfa=Mfa, next=Time, options=Options},
           Tasks = dict:store(Name, Task, Tasks0),
           Queue = gb_trees:insert({Time, Name}, Name, Queue0),
           {ok, {Tasks, Queue}};
@@ -128,7 +138,7 @@ do_del(Name, Tasks0, Queue0) ->
 do_tick(S) ->
   case gb_trees:size(S#s.queue) of
     0 -> S;
-    _ -> Now = scheduler_time:now(),
+    _ -> Now = crontab_time:now(),
          case gb_trees:take_smallest(S#s.queue) of
            {{Time, Name}, Name, Queue0}
              when Time =< Now ->
@@ -136,7 +146,7 @@ do_tick(S) ->
              Running        = try_start(Name, Task, S#s.running),
              {Tasks, Queue} = try_schedule(Name, Task, S#s.tasks, Queue0),
              do_tick(S#s{running=Running, queue=Queue, tasks=Tasks});
-           {{_Time, _Name}, _Name, _Qeueu} ->
+           {{_Time, _Name}, _Name, _Queue} ->
              S
          end
   end.
@@ -144,7 +154,7 @@ do_tick(S) ->
 try_start(Name, Task, Running0) ->
   case dict:is_key(Name, Running0) of
     true ->
-      ?warning("overlapping task, not starting"),
+      ?warning("~p is still running, not starting", [Name]),
       Running0;
     false ->
       ?debug("starting ~p", [Name]),
@@ -155,15 +165,15 @@ try_start(Name, Task, Running0) ->
   end.
 
 try_schedule(Name, Task, Tasks0, Queue0) ->
-  case scheduler_time:find_next(Task#task.spec, Task#task.next) of
+  case crontab_time:find_next(Task#task.spec, Task#task.next) of
     {ok, Time} ->
       ?debug("scheduling ~p: ~p", [Name, Time]),
-      Tasks = dict:insert(Name, Task#task{next=Time}, Tasks0),
+      Tasks = dict:store(Name, Task#task{next=Time}, Tasks0),
       Queue = gb_trees:insert({Time, Name}, Name, Queue0),
       {Tasks, Queue};
     {error, Rsn} ->
       ?debug("unable to schedule ~p: ~p", [Name, Rsn]),
-      {dict:insert(Name, Task#task{next=undefined}, Tasks0), Queue0}
+      {dict:store(Name, Task#task{next=undefined}, Tasks0), Queue0}
   end.
 
 %%%_* Tests ============================================================

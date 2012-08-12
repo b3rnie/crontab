@@ -5,7 +5,7 @@
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 
 %%%_* Module declaration ===============================================
--module(scheduler_app).
+-module(crontab_app).
 -behaviour(application).
 
 %%%_* Exports ==========================================================
@@ -15,7 +15,7 @@
 
 %%%_* Code =============================================================
 start(normal, Args) ->
-  scheduler_sup:start_link(Args).
+  crontab_sup:start_link(Args).
 
 stop(_S) ->
   ok.

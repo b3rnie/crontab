@@ -5,7 +5,7 @@
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 
 %%%_* Module declaration ===============================================
--module(scheduler_sup).
+-module(crontab_sup).
 -behaviour(supervisor).
 
 %%%_* Exports ==========================================================
@@ -21,8 +21,8 @@ init(Args) ->
   %% with any other restart strategy than this we need to persist
   %% state somewhere.
   RestartStrategy = {one_for_all, 0, 1},
-  Kids = [ {scheduler_server, {scheduler_server, start_link, [Args]},
-            permanent, 5000, worker, [scheduler_server]}
+  Kids = [ {crontab_server, {crontab_server, start_link, [Args]},
+            permanent, 5000, worker, [crontab_server]}
          ],
   {ok, {RestartStrategy, Kids}}.
 

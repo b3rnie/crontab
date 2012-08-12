@@ -1,9 +1,9 @@
-{application, scheduler,
- [ {description,  "scheduler"}
+{application, crontab,
+ [ {description,  "crontab"}
  , {vsn,          git}
  , {registered,   []}
  , {applications, [kernel, stdlib]}
- , {mod,          {scheduler_app, []}}
+ , {mod,          {crontab_app, []}}
  , {env,          []}
  ]
 }.
