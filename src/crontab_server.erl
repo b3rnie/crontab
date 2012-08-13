@@ -69,8 +69,12 @@ init(_Args) ->
   {ok, TRef} = timer:send_interval(?tick, tick),
   {ok, #s{tref=TRef}}.
 
-terminate(_Rsn, #s{tref=TRef} = _S) ->
-  timer:cancel(TRef),
+terminate(_Rsn, S) ->
+  timer:cancel(S#s.tref),
+  lists:foreach(fun({K,_V}) when erlang:is_pid(K)  -> ok;
+                   ({K,_V}) when erlang:is_atom(K) ->
+                    exit(K, stopped)
+                end, dict:to_list(S#s.running)),
   ok.
 
 handle_call({add, Name, Spec, MFA, Options}, _From, S) ->
