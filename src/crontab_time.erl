@@ -91,6 +91,11 @@ try_all(F, [H|T]) ->
 try_all(_F, []) -> ok.
 
 %%%_ * Internal next calculation ---------------------------------------
+%% The way this works:
+%% Step 1. Generate all possible dates looking at a spec and from date,
+%%         what is possible is decided by the next/3 function.
+%% Step 2. Filter out invalid dates and passed ones and pick the
+%%         smallest one.
 find_next(Spec, From, [U|Us], Dates) ->
   Nexts = next(U, fetch(U, Spec), fetch(U, From)),
   find_next(Spec, From, Us, [[Next|Date] || Date <- Dates,
