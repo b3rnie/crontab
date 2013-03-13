@@ -10,9 +10,8 @@
 
 %%%_* Exports ==========================================================
 -export([ start_link/1
-        , stop/0
-        , add/3
-        , del/1
+        , schedule/4
+        , unschedule/2
         ]).
 
 -export([ init/1
@@ -35,13 +34,15 @@
 
 %%%_* Code =============================================================
 %%%_ * Types -----------------------------------------------------------
--record(s, { tasks    = dict:new()       %% {k:name, v:#task{}}
-           , queue    = gb_trees:empty() %% {k:{time, name}, v:name
-           , running  = dict:new()       %% {k:pid, v:name} | {k:name, v:pid}
+-record(s, { tasks        = gb_trees:empty() %% name -> task
+           , queue        = gb_trees:empty() %% time -> name
+           , running_p2n  = dict:new()
+	   , running_n2p  = dict:new()
            , tref
            }).
 
--record(task, { spec
+-record(task, { name
+	      , spec
               , mfa
               , next
               , options
@@ -51,59 +52,55 @@
 start_link(Args) ->
   gen_server:start_link({local, ?MODULE}, ?MODULE, Args, []).
 
-stop() ->
-  gen_server:cast(?MODULE, stop).
+schedule(Name, Spec, MFA, Options) ->
+  gen_server:call(?MODULE, {add, {Name, Spec, MFA, Options}}).
 
-add(Name, Spec, MFA) ->
-  add(Name, Spec, MFA, []).
-
-add(Name, Spec, MFA, Options) ->
-  gen_server:call(?MODULE, {add, Name, Spec, MFA, Options}).
-
-del(Name) ->
-  gen_server:call(?MODULE, {del, Name}).
+unschedule(Name, Options) ->
+  gen_server:call(?MODULE, {remove, {Name, Options}}).
 
 %%%_ * gen_server callbacks --------------------------------------------
-init(_Args) ->
+init([]) ->
   erlang:process_flag(trap_exit, true),
   {ok, TRef} = timer:send_interval(?tick, tick),
   {ok, #s{tref=TRef}}.
 
-terminate(_Rsn, S) ->
+terminate(Rsn, S) ->
   timer:cancel(S#s.tref),
-  lists:foreach(fun({K,_V}) when erlang:is_pid(K)  -> ok;
-                   ({K,_V}) when erlang:is_atom(K) ->
-                    exit(K, stopped)
-                end, dict:to_list(S#s.running)),
+  lists:foreach(fun({Pid,_Name}) ->
+		    exit(Pid, Rsn)
+		end, dict:to_list(S#s.running_p2n)),
   ok.
 
-handle_call({add, Name, Spec, MFA, Options}, _From, S) ->
-  ?debug("adding task ~p", [Name]),
-  case do_add({Name, Spec, MFA, Options}, S#s.tasks, S#s.queue) of
-    {ok, {Tasks, Queue}} -> {reply, ok, S#s{tasks=Tasks, queue=Queue}};
-    {error, Rsn}         -> {reply, {error, Rsn}, S}
+handle_call({add, {Name, Spec, MFA, Options}}, _From, S) ->
+  case do_add(Name, Spec, MFA, Options, S#s.tasks, S#s.queue) of
+    {ok, {Tasks, Queue}} ->
+      {reply, ok, S#s{tasks=Tasks, queue=Queue}};
+    {error, Rsn} ->
+      {reply, {error, Rsn}, S}
   end;
 
-handle_call({del, Name}, _From, S) ->
-  ?debug("deleting task ~p", [Name]),
-  case do_del(Name, S#s.tasks, S#s.queue) of
+handle_call({remove, {Name, Options}}, _From, S) ->
+  ?debug("unscheduling task ~p", [Name]),
+  case do_remove(
+	 Name, Options, S#s.tasks, S#s.queue, S#s.running_p2n,
+	 S#s.running_n2p) of
     {ok, {Tasks, Queue}} -> {reply, ok, S#s{tasks=Tasks, queue=Queue}};
     {error, Rsn}         -> {reply, {error, Rsn}, S}
   end.
 
-handle_cast(stop, S) ->
-    {stop, normal, S}.
+handle_cast(Msg, S) ->
+    {stop, {bad_cast, Msg}, S}.
 
 handle_info(tick, S) ->
-  {noreply, do_tick(S)};
-
-handle_info({'EXIT', Pid, Rsn}, #s{running=Running0} = S) ->
-  Name     = dict:fetch(Pid, Running0),
-  Running1 = dict:erase(Pid, Running0),
-  Running  = dict:erase(Name, Running1),
-  ?warning("task ~p done: ~p", [Name, Rsn]),
-  {noreply, S#s{running=Running}};
-
+  {Tasks, Queue, P2N, N2P} =
+    do_tick(S#s.tasks, S#s.queue, S#s.running_p2n, S#s.running_n2p),
+  {noreply, S#s{tasks=Tasks, queue=Queue, running_p2n=P2N, running_n2p=N2P}};
+handle_info({'EXIT', Pid, Rsn}, S) ->
+  Name = dict:fetch(Pid, S#s.running_p2n),
+  ?debug("~p done: ~p", [Name, Rsn]),
+  {noreply, S#s{ running_p2n=dict:erase(Pid, S#s.running_p2n)
+	       , running_n2p=dict:erase(Name, S#s.running_n2p)
+	       }};
 handle_info(Msg, S) ->
   ?warning("~p", [Msg]),
   {noreply, S}.
@@ -112,72 +109,83 @@ code_change(_OldVsn, S, _Extra) ->
   {ok, S}.
 
 %%%_ * Internals -------------------------------------------------------
-do_add({Name, Spec, Mfa, Options}, Tasks0, Queue0) ->
-  case dict:is_key(Name, Tasks0) of
+
+do_add(Name, Spec, MFA, Options, Tasks, Queue) ->
+  case gb_trees:is_defined(Name, Tasks) of
     true  -> {error, task_exists};
     false ->
       case crontab_time:find_next(Spec, crontab_time:now()) of
-        {ok, Time} ->
-          Task  = #task{spec=Spec, mfa=Mfa, next=Time, options=Options},
-          Tasks = dict:store(Name, Task, Tasks0),
-          Queue = gb_trees:insert({Time, Name}, Name, Queue0),
-          {ok, {Tasks, Queue}};
-        {error, Rsn} ->
-          {error, Rsn}
+	{ok, Time} ->
+	  Task = #task{spec=Spec, mfa=MFA, next=Time, options=Options},
+	  {ok, { gb_trees:insert(Name, Task, Tasks)
+	       , gb_trees:insert({Time, Name}, Name, Queue)
+	       }};
+	{error, Rsn} ->
+	  {error, Rsn}
       end
   end.
 
-do_del(Name, Tasks0, Queue0) ->
-  case dict:find(Name, Tasks0) of
-    {ok, #task{next=undefined}} ->
-      {ok, {dict:erase(Name, Tasks0), Queue0}};
-    {ok, #task{next=Next}} ->
-      Tasks = dict:erase(Name, Tasks0),
-      Queue = gb_trees:delete({Next, Name}, Queue0),
-      {ok, {Tasks, Queue}};
-    error ->
+do_remove(Name, Options, Tasks, Queue, P2N, N2P) ->
+  case gb_trees:lookup(Name, Tasks) of
+    {value, #task{next=Time, options=TaskOptions}} ->
+      maybe_stop(Name, lists:append([Options, TaskOptions]), P2N, N2P),
+      {ok, { gb_trees:delete(Name, Tasks)
+	   , gb_trees:delete_any({Time, Name}, Queue)}};
+    none ->
       {error, no_such_task}
   end.
 
-do_tick(S) ->
-  case gb_trees:size(S#s.queue) of
-    0 -> S;
+maybe_stop(Name, Options, _P2N, N2P) ->
+  case dict:find(Name, N2P) of
+    {ok, Pid} -> [exit(Pid, removed) || kf(stop_on_exit, Options, true)];
+    error     -> ok
+  end.
+
+kf(K, L, D) ->
+  case lists:keyfind(K, 1, L) of
+    {K, V} -> V;
+    false  -> D
+  end.
+
+do_tick(Tasks0, Queue0, P2N0, N2P0) ->
+  case gb_trees:size(Queue0) of
+    0 -> {Tasks0, Queue0, P2N0, N2P0};
     _ -> Now = crontab_time:now(),
-         case gb_trees:take_smallest(S#s.queue) of
-           {{Time, Name}, Name, Queue0}
+         case gb_trees:take_smallest(Queue0) of
+           {{Time, Name}, Name, Queue1}
              when Time =< Now ->
-             Task           = dict:fetch(Name, S#s.tasks),
-             Running        = try_start(Name, Task, S#s.running),
-             {Tasks, Queue} = try_schedule(Name, Task, S#s.tasks, Queue0),
-             do_tick(S#s{running=Running, queue=Queue, tasks=Tasks});
+             Task           = gb_trees:get(Name, Tasks0),
+             {P2N, N2P}     = try_start(Name, Task, P2N0, N2P0),
+             {Tasks, Queue} = try_schedule(Name, Task, Tasks0, Queue1),
+             do_tick(Tasks, Queue, P2N, N2P);
            {{_Time, _Name}, _Name, _Queue} ->
-             S
+             {Tasks0, Queue0, P2N0, N2P0}
          end
   end.
 
-try_start(Name, Task, Running0) ->
-  case dict:is_key(Name, Running0) of
+try_start(Name, Task, P2N, N2P) ->
+  %% TODO: overlapping
+  case dict:is_key(Name, N2P) of
     true ->
       ?warning("~p is still running, not starting", [Name]),
-      Running0;
+      {P2N, N2P};
     false ->
       ?debug("starting ~p", [Name]),
       {M,F,A} = Task#task.mfa,
       Pid = erlang:spawn_link(M, F, A),
-      Running1 = dict:store(Pid, Name, Running0),
-      _Running = dict:store(Name, Pid, Running1)
+      {dict:store(Pid, Name, P2N),
+       dict:store(Name, Pid, N2P)}
   end.
 
 try_schedule(Name, Task, Tasks0, Queue0) ->
   case crontab_time:find_next(Task#task.spec, Task#task.next) of
     {ok, Time} ->
       ?debug("scheduling ~p: ~p", [Name, Time]),
-      Tasks = dict:store(Name, Task#task{next=Time}, Tasks0),
-      Queue = gb_trees:insert({Time, Name}, Name, Queue0),
-      {Tasks, Queue};
+      {gb_trees:update(Name, Task#task{next=Time}, Tasks0),
+       gb_trees:insert({Time, Name}, Name, Queue0)};
     {error, Rsn} ->
       ?debug("unable to schedule ~p: ~p", [Name, Rsn]),
-      {dict:store(Name, Task#task{next=undefined}, Tasks0), Queue0}
+      {gb_trees:update(Name, Task#task{next=undefined}, Tasks0), Queue0}
   end.
 
 %%%_* Tests ============================================================

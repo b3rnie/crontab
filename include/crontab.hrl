@@ -15,4 +15,9 @@
 -define(warning(F,A), error_logger:warning_msg(F,A)).
 -endif.
 
+-ifndef(error).
+-define(error(F), ?error(F, [])).
+-define(error(F,A), error_logger:error_msg(F,A)).
+-endif.
+
 -endif.
