@@ -22,9 +22,13 @@
 %%%_* Code =============================================================
 %%%_ * API -------------------------------------------------------------
 validate_spec([_,_,_,_,_] = Spec) ->
-  try_all(fun do_validate/1, lists:zip(units(), Spec));
+  F = fun({U,L}) when erlang:is_list(L) -> [{U,N} || N <- L];
+	 ({U,N})                        -> [{U,N}]
+      end,
+  Expanded = lists:map(F, lists:zip(units(), Spec)),
+  try_all(fun do_validate/1, lists:append(Expanded));
 validate_spec(_Spec) ->
-  {error, spec_format}.
+  {error, invalid_format}.
 
 find_next(Spec, From) ->
   [U|Us] = units(),
@@ -39,20 +43,16 @@ max(L) ->
   lists:max(L).
 
 %%%_ * Internal spec validation ----------------------------------------
-do_validate({_U, "*"}) -> ok;
-do_validate({year, Y}) ->
-  case in_range(Y, 0, inf) of
-    true  -> ok;
-    false -> {error, spec_year}
-  end;
-%% TODO: maybe support something like this aswell
-%% do_validate({month, january}) -> ok;
-%% do_validate({month, february}) -> ok;
-do_validate({month, M}) ->
-  case in_range(M, 1, 12) of
-    true  -> ok;
-    false -> {error, spec_month}
-  end;
+do_validate({_U, '*'})        -> ok;
+do_validate({year, Y})
+  when erlang:is_integer(Y),
+       Y >= 0                 -> ok;
+do_validate({year, _})        -> {error, year};
+do_validate({month, M})
+  when erlang:is_integer(M),
+       M >= 1,
+       M =<12                 -> ok;
+do_validate({month, _})       -> {error, month};
 do_validate({day, monday})    -> ok;
 do_validate({day, tuesday})   -> ok;
 do_validate({day, wednesday}) -> ok;
@@ -60,28 +60,21 @@ do_validate({day, thursday})  -> ok;
 do_validate({day, friday})    -> ok;
 do_validate({day, saturday})  -> ok;
 do_validate({day, sunday})    -> ok;
-do_validate({day, D}) ->
-  case in_range(D, 1, 31) of
-    true  -> ok;
-    false -> {error, spec_day}
-  end;
-do_validate({hour, H}) ->
-  case in_range(H, 0, 23) of
-    true  -> ok;
-    false -> {error, spec_hour}
-  end;
-do_validate({minute, M}) ->
-  case in_range(M, 0, 59) of
-    true  -> ok;
-    false -> {error, spec_minute}
-  end.
-
-in_range(N,  _S,  _E ) when not erlang:is_integer(N) -> false;
-in_range(_N, inf, inf)                               -> true;
-in_range(N,  inf, E  ) when N =< E                   -> true;
-in_range(N,  S,   inf) when N >= S                   -> true;
-in_range(N,  S,   E  ) when N>=S, N=<E               -> true;
-in_range(_N, _S,  _E )                               -> false.
+do_validate({day, D})
+  when erlang:is_integer(D),
+       D >= 1,
+       D =< 31                -> ok;
+do_validate({day, _})         -> {error, day};
+do_validate({hour, H})
+  when erlang:is_integer(H),
+       H >= 0,
+       H =< 23                -> ok;
+do_validate({hour, _})        -> {error, hour};
+do_validate({minute, M})
+  when erlang:is_integer(M),
+       M >= 0,
+       M =< 59                -> ok;
+do_validate({minute, _})      -> {error, minute}.
 
 try_all(F, [H|T]) ->
   case F(H) of
@@ -123,7 +116,7 @@ filter_invalid_ymd(Dates) ->
 
 filter_invalid_day(Dates, Spec) ->
   Day = fetch(day, Spec),
-  case erlang:is_atom(Day) of
+  case erlang:is_atom(Day) andalso Day =/= '*' of
     true  -> do_filter_invalid_day(Dates, Spec);
     false -> Dates
   end.
@@ -138,24 +131,24 @@ do_filter_invalid_day(Dates, Spec) ->
 filter_passed(Dates, From) ->
   lists:filter(fun(Date) -> Date > From end, Dates).
 
-next(year,   "*", Y ) -> [Y, Y+1, Y+2, Y+3, Y+4];
+next(year,   '*', Y ) -> [Y, Y+1, Y+2, Y+3, Y+4];
 next(year,   Y,   _ ) -> [Y];
-next(month,  "*", 12) -> [12, 1];
-next(month,  "*", M ) -> [M, M+1, 1];
+next(month,  '*', 12) -> [12, 1];
+next(month,  '*', M ) -> [M, M+1, 1];
 next(month,  M,   _ ) -> [M];
-next(day,    "*", 28) -> [1, 28, 29];
-next(day,    "*", 29) -> [1, 29, 30];
-next(day,    "*", 30) -> [1, 30, 31];
-next(day,    "*", 31) -> [1, 31];
-next(day,    "*", D ) -> [1, D, D+1];
+next(day,    '*', 28) -> [1, 28, 29];
+next(day,    '*', 29) -> [1, 29, 30];
+next(day,    '*', 30) -> [1, 30, 31];
+next(day,    '*', 31) -> [1, 31];
+next(day,    '*', D ) -> [1, D, D+1];
 next(day,    S,   _ )
   when is_atom(S)     -> lists:seq(1, 31);
 next(day,    S,   _ ) -> [S];
-next(hour,   "*", 23) -> [0, 23];
-next(hour,   "*", H ) -> [0, H, H+1];
+next(hour,   '*', 23) -> [0, 23];
+next(hour,   '*', H ) -> [0, H, H+1];
 next(hour,   H,   _ ) -> [H];
-next(minute, "*", 59) -> [0];
-next(minute, "*", M ) -> [0, M+1];
+next(minute, '*', 59) -> [0];
+next(minute, '*', M ) -> [0, M+1];
 next(minute, M,   _ ) -> [M].
 
 fetch(year,   [Y,_,_,_,_]       ) -> Y;
@@ -186,20 +179,9 @@ day_of_the_week(7) -> sunday.
 %% TODO: needs to be extended to cover more complex searches
 -define(skew, 10).
 
-in_range_test() ->
-  true  = in_range(0, -1, 1),
-  true  = in_range(0, inf, inf),
-  true  = in_range(0, inf, 1),
-  true  = in_range(1, -1, inf),
-  false = in_range(5, 0, 4),
-  false = in_range(5, 6, 9),
-  false = in_range(x, inf, inf),
-  false = in_range(x, 0, 10),
-  ok.
-
 every_day_test() ->
   From = [2012, 1, 1, 0, 0],
-  Spec = ["*", "*", "*", 0, 0],
+  Spec = ['*', '*', '*', 0, 0],
   Stop = fun([Y,_,_,_,_]) -> Y =:= 2018 end,
   Cond = fun(GSecs1, GSecs2) ->
              Diff = GSecs2 - GSecs1,
@@ -217,7 +199,7 @@ every_week_test() ->
          end,
   Stop = fun([Y,_,_,_,_]) -> Y =:= 2014 end,
   lists:foreach(fun(DayInt) ->
-                    Spec = ["*","*",day_of_the_week(DayInt),0,0],
+                    Spec = ['*','*',day_of_the_week(DayInt),0,0],
                     ok = validate_spec(Spec),
                     {ok, Next} = find_next(Spec, From),
                     iterate(Next, Stop, Spec, Cond)
@@ -230,7 +212,7 @@ every_hour_test() ->
              Diff > (3600-?skew) andalso Diff < (3600+?skew)
          end,
   Stop = fun([_,M,_,_,_]) -> M =:= 3 end,
-  Spec = ["*", "*", "*", "*", 0],
+  Spec = ['*', '*', '*', '*', 0],
   {ok, Next} = find_next(Spec, From),
   iterate(Next, Stop, Spec, Cond).
 
@@ -253,13 +235,15 @@ next_test() ->
 
 tests() ->
   %% {Spec, Now, Expected}
-  [ {["*",  2, 29,     20,  0 ],  [2012, 3,  1,0,0],  [2016,2,29,20,0]}
-  , {["*",  1, friday, 0,   0 ],  [2012, 1,  1,1,43], [2012,1,6,0,0]}
-  , {[2014, 9, 15,     "*", 20],  [2013, 11, 28, 12, 3], [2014,9,15,0,20]}
-  , {["*",   2, "*",    0,   0 ], [2012, 2,  28, 0,  0], [2012, 2, 29, 0, 0]}
-  , {["*",  "*", 30,  "*",   "*"],[2012, 4,  30, 0, 59], [2012, 4, 30, 1, 0]}
+  [ {['*',  2, 29,     20,  0 ],  [2012, 3,  1,0,0],  [2016,2,29,20,0]}
+  , {['*',  1, friday, 0,   0 ],  [2012, 1,  1,1,43], [2012,1,6,0,0]}
+  , {[2014, 9, 15,     '*', 20],  [2013, 11, 28, 12, 3], [2014,9,15,0,20]}
+  , {['*',   2, '*',    0,   0 ], [2012, 2,  28, 0,  0], [2012, 2, 29, 0, 0]}
+  , {['*',  '*', 30,  '*',  '*'],[2012, 4,  30, 0, 59], [2012, 4, 30, 1, 0]}
   ].
+
 -else.
+
 -endif.
 
 %%%_* Emacs ============================================================

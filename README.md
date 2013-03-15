@@ -1,8 +1,10 @@
-<h1>crontab</h1>
+<h1>Crontab</h1>
 
 =====================
 
 __Authors:__ Bjorn Jensen-Urstad ([`bjorn.jensen.urstad@gmail.com`](mailto:bjorn.jensen.urstad@gmail.com)).
+
+Crontab for Erlang.
 
 
 Execute scheduled functions.

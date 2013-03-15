@@ -9,7 +9,9 @@
 
 %%%_* Exports ==========================================================
 -export([ add/3
+	, add/4
         , remove/1
+	, remove/2
         ]).
 
 %%%_* Includes =========================================================
@@ -47,12 +49,12 @@ start_stop_test_() ->
   end.
 
 bad_spec_test() ->
-  {error, spec_format} = crontab:add(foo, bar, {m,f,[]}).
+  {error, invalid_format} = crontab:add(foo, bar, {m,f,[]}).
 
 add_remove_test_() ->
   crontab_test:with_crontab(
     fun() ->
-	Spec = ["*", "*", "*", "*", "*"],
+	Spec = ['*', '*', '*', '*', '*'],
 	MFA  = {crontab_test, execute_funs, [[]]},
 	ok   = crontab:add(foo, Spec, MFA),
 	ok   = crontab:add(bar, Spec, MFA),
@@ -68,7 +70,7 @@ run_test_() ->
 	  Daddy = erlang:self(),
 	  Ref   = erlang:make_ref(),
 	  MFA   = {crontab_test, execute_funs, [[fun() -> Daddy ! Ref end]]},
-	  ok    = crontab:add(foo, ["*", "*", "*", "*", "*"], MFA),
+	  ok    = crontab:add(foo, ['*', '*', '*', '*', '*'], MFA),
 	  receive Ref -> ok end
       end,
   {timeout, 120, crontab_test:with_crontab(F)}.
