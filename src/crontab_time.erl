@@ -10,7 +10,7 @@
 -compile({no_auto_import, [now/0]}).
 
 %%%_* Exports ==========================================================
--export([ validate_spec/1
+-export([ parse_spec/1
         , find_next/2
         , now/0
         , max/1
@@ -21,19 +21,20 @@
 
 %%%_* Code =============================================================
 %%%_ * API -------------------------------------------------------------
-validate_spec([_,_,_,_,_] = Spec) ->
-  F = fun({U,L}) when erlang:is_list(L) -> [{U,N} || N <- L];
-	 ({U,N})                        -> [{U,N}]
-      end,
-  Expanded = lists:map(F, lists:zip(units(), Spec)),
-  try_all(fun do_validate/1, lists:append(Expanded));
-validate_spec(_Spec) ->
-  {error, invalid_format}.
+parse_spec([_,_,_,_,_] = Spec) ->
+  Exp   = expand_terms(Spec),
+  Check = lists:append([[{U,N} || N <- L] ||
+			 {U,L} <- lists:zip(units(), Exp)]),
+  case try_all(fun do_validate/1, Check) of
+    ok           -> {ok, Exp};
+    {error, Rsn} -> {error, Rsn}
+  end.
 
 find_next(Spec, From) ->
   [U|Us] = units(),
-  Start  = next(U, fetch(U, Spec), fetch(U, From)),
-  find_next(Spec, From, Us, [[E] || E <- Start]).
+  Nexts  = [[[{E,S}] || E <- next(U, S, fetch(U, From))] ||
+	     S <- fetch(U, Spec)],
+  find_next(Spec, From, Us, lists:append(Nexts)).
 
 now() ->
   {{Y,M,D}, {Hr,Min,_Sec}} = calendar:local_time(),
@@ -42,7 +43,12 @@ now() ->
 max(L) ->
   lists:max(L).
 
-%%%_ * Internal spec validation ----------------------------------------
+%%%_ * Internal spec validate/parse ------------------------------------
+expand_terms(Spec) ->
+  lists:map(fun(L) when is_list(L) -> lists:usort(L);
+	       (N)                 -> [N]
+	    end, Spec).
+
 do_validate({_U, '*'})        -> ok;
 do_validate({year, Y})
   when erlang:is_integer(Y),
@@ -90,14 +96,17 @@ try_all(_F, []) -> ok.
 %% Step 2. Filter out invalid dates and passed ones and pick the
 %%         smallest one.
 find_next(Spec, From, [U|Us], Dates) ->
-  Nexts = next(U, fetch(U, Spec), fetch(U, From)),
+  Nexts = [[{E,S} || E <- next(U, S, fetch(U, From))] ||
+	    S <- fetch(U, Spec)],
   find_next(Spec, From, Us, [[Next|Date] || Date <- Dates,
-                                            Next <- Nexts]);
-find_next(Spec, From, [], Alldates) ->
+					    Next <- lists:append(Nexts)]);
+
+find_next(_Spec, From, [], Alldates) ->
   %% ?debug("alldates: ~p", [Alldates]),
   Fs = [ fun(Dates) -> reverse_order(Dates) end
        , fun(Dates) -> filter_invalid_ymd(Dates) end
-       , fun(Dates) -> filter_invalid_day(Dates, Spec) end
+       , fun(Dates) -> filter_invalid_day(Dates) end
+       , fun(Dates) -> untag(Dates) end
        , fun(Dates) -> filter_passed(Dates, From) end
        ],
   case lists:sort(lists:foldl(fun(F, X) -> F(X) end, Alldates, Fs)) of
@@ -110,23 +119,24 @@ reverse_order(Dates) ->
 
 filter_invalid_ymd(Dates) ->
   lists:filter(fun(Date) ->
-                   [Y,M,D] = fetch([year, month, day], Date),
+                   [{Y,_},{M,_},{D,_}] = fetch([year, month, day], Date),
                    calendar:valid_date(Y, M, D)
                end, Dates).
 
-filter_invalid_day(Dates, Spec) ->
-  Day = fetch(day, Spec),
-  case erlang:is_atom(Day) andalso Day =/= '*' of
-    true  -> do_filter_invalid_day(Dates, Spec);
-    false -> Dates
-  end.
-
-do_filter_invalid_day(Dates, Spec) ->
-  Day = fetch(day, Spec),
+filter_invalid_day(Dates) ->
   lists:filter(fun(Date) ->
-                   [Y,M,D] = fetch([year, month, day], Date),
-                   Day =:= day_of_the_week(Y, M, D)
-               end, Dates).
+		   [{Y,_},{M,_},{D,Ds}] = fetch([year, month, day], Date),
+		   case erlang:is_atom(Ds) andalso Ds =/= '*' of
+		     true  -> Ds =:= day_of_the_week(Y,M,D);
+		     false -> true
+		   end
+	       end, Dates).
+
+untag(Dates) ->
+  lists:map(fun(Date) ->
+		{L, _} = lists:unzip(Date),
+		L
+	    end, Dates).
 
 filter_passed(Dates, From) ->
   lists:filter(fun(Date) -> Date > From end, Dates).
@@ -178,7 +188,6 @@ day_of_the_week(7) -> sunday.
 
 %% TODO: needs to be extended to cover more complex searches
 -define(skew, 10).
-
 every_day_test() ->
   From = [2012, 1, 1, 0, 0],
   Spec = ['*', '*', '*', 0, 0],
@@ -187,8 +196,9 @@ every_day_test() ->
              Diff = GSecs2 - GSecs1,
              Diff > (86400-?skew) andalso Diff < (86400+?skew)
          end,
-  {ok, Next} = find_next(Spec, From),
-  iterate(Next, Stop, Spec, Cond).
+  {ok, PSpec} = parse_spec(Spec),
+  {ok, Next} = find_next(PSpec, From),
+  iterate(Next, Stop, PSpec, Cond).
 
 every_week_test() ->
   From = [2012,1,1,0,0],
@@ -197,12 +207,12 @@ every_week_test() ->
              Week = 86400 * 7,
              Diff > (Week-?skew) andalso Diff < (Week+?skew)
          end,
-  Stop = fun([Y,_,_,_,_]) -> Y =:= 2014 end,
+  Stop = fun([Y,_,_,_,_]) -> Y =:= 2013 end,
   lists:foreach(fun(DayInt) ->
                     Spec = ['*','*',day_of_the_week(DayInt),0,0],
-                    ok = validate_spec(Spec),
-                    {ok, Next} = find_next(Spec, From),
-                    iterate(Next, Stop, Spec, Cond)
+                    {ok, PSpec} = parse_spec(Spec),
+                    {ok, Next} = find_next(PSpec, From),
+                    iterate(Next, Stop, PSpec, Cond)
                 end, lists:seq(1, 7)).
 
 every_hour_test() ->
@@ -212,9 +222,9 @@ every_hour_test() ->
              Diff > (3600-?skew) andalso Diff < (3600+?skew)
          end,
   Stop = fun([_,M,_,_,_]) -> M =:= 3 end,
-  Spec = ['*', '*', '*', '*', 0],
-  {ok, Next} = find_next(Spec, From),
-  iterate(Next, Stop, Spec, Cond).
+  {ok, PSpec} = parse_spec(['*', '*', '*', '*', 0]),
+  {ok, Next} = find_next(PSpec, From),
+  iterate(Next, Stop, PSpec, Cond).
 
 iterate([Y1,M1,D1,H1,Min1] = Prev, Stop, Spec, Cond) ->
   {ok, [Y2,M2,D2,H2,Min2]=Next} = find_next(Spec, Prev),
@@ -228,8 +238,8 @@ iterate([Y1,M1,D1,H1,Min1] = Prev, Stop, Spec, Cond) ->
 
 next_test() ->
   lists:foreach(fun({Spec, Now, Expected}) ->
-                    ok = validate_spec(Spec),
-                    {ok, Expected} = find_next(Spec, Now)
+                    {ok, PSpec} = parse_spec(Spec),
+                    ?assertEqual({ok, Expected}, find_next(PSpec, Now))
                 end, tests()),
   ok.
 

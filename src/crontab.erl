@@ -23,8 +23,8 @@ add(Name, Spec, MFA) ->
   add(Name, Spec, MFA, []).
 
 add(Name, Spec, MFA, Options) ->
-  case crontab_time:validate_spec(Spec) of
-    ok           -> crontab_server:add(Name, Spec, MFA, Options);
+  case crontab_time:parse_spec(Spec) of
+    {ok, PSpec}  -> crontab_server:add(Name, PSpec, MFA, Options);
     {error, Rsn} -> {error, Rsn}
   end.
 
@@ -47,9 +47,6 @@ start_stop_test_() ->
       ok = application:stop(crontab),
       ok = crontab_test:waitfor(crontab)
   end.
-
-bad_spec_test() ->
-  {error, invalid_format} = crontab:add(foo, bar, {m,f,[]}).
 
 add_remove_test_() ->
   crontab_test:with_crontab(
