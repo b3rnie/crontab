@@ -186,55 +186,46 @@ day_of_the_week(7) -> sunday.
 %% -include_lib("proper/include/proper.hrl").
 -include_lib("eunit/include/eunit.hrl").
 
-%% TODO: needs to be extended to cover more complex searches
 -define(skew, 10).
 every_day_test() ->
-  From = [2012, 1, 1, 0, 0],
   Spec = ['*', '*', '*', 0, 0],
-  Stop = fun([Y,_,_,_,_]) -> Y =:= 2018 end,
-  Cond = fun(GSecs1, GSecs2) ->
-             Diff = GSecs2 - GSecs1,
-             Diff > (86400-?skew) andalso Diff < (86400+?skew)
-         end,
-  {ok, PSpec} = parse_spec(Spec),
-  {ok, Next} = find_next(PSpec, From),
-  iterate(Next, Stop, PSpec, Cond).
+  Diff = 86400,
+  iterate(Spec, Diff).
 
-every_week_test() ->
-  From = [2012,1,1,0,0],
-  Cond = fun(GSecs1, GSecs2) ->
-             Diff = GSecs2 - GSecs1,
-             Week = 86400 * 7,
-             Diff > (Week-?skew) andalso Diff < (Week+?skew)
-         end,
-  Stop = fun([Y,_,_,_,_]) -> Y =:= 2013 end,
-  lists:foreach(fun(DayInt) ->
-                    Spec = ['*','*',day_of_the_week(DayInt),0,0],
-                    {ok, PSpec} = parse_spec(Spec),
-                    {ok, Next} = find_next(PSpec, From),
-                    iterate(Next, Stop, PSpec, Cond)
-                end, lists:seq(1, 7)).
+every_week_test_() ->
+  {timeout, 30,
+   fun() ->
+       lists:foreach(fun(D) ->
+			 Spec = ['*', '*', day_of_the_week(D), 0, 0],
+			 Diff = 86400 * 7,
+			 iterate(Spec, Diff)
+		     end, lists:seq(1, 7))
+   end}.
+
+every_15m_test() ->
+  Spec = ['*', '*', '*', '*', [0, 15, 30, 45]],
+  Diff = 3600 div 4,
+  iterate(Spec, Diff).
 
 every_hour_test() ->
-  From = [2012,10,1,0,0],
-  Cond = fun(GSecs1, GSecs2) ->
-             Diff = GSecs2 - GSecs1,
-             Diff > (3600-?skew) andalso Diff < (3600+?skew)
-         end,
-  Stop = fun([_,M,_,_,_]) -> M =:= 3 end,
-  {ok, PSpec} = parse_spec(['*', '*', '*', '*', 0]),
-  {ok, Next} = find_next(PSpec, From),
-  iterate(Next, Stop, PSpec, Cond).
+  Spec = ['*', '*', '*', '*', 0],
+  Diff = 3600,
+  iterate(Spec, Diff).
 
-iterate([Y1,M1,D1,H1,Min1] = Prev, Stop, Spec, Cond) ->
-  {ok, [Y2,M2,D2,H2,Min2]=Next} = find_next(Spec, Prev),
+-define(steps, 500).
+iterate(Spec, Diff) ->
+  {ok, PSpec} = parse_spec(Spec),
+  {ok, Next}  = find_next(PSpec, now()),
+  do_iterate(PSpec, Diff, Next, ?steps).
+
+do_iterate(_, _, _, 0) -> ok;
+do_iterate(PSpec, Diff, [Y1,M1,D1,H1,Min1] = Prev, N) ->
+  {ok, [Y2,M2,D2,H2,Min2]=Next} = find_next(PSpec, Prev),
   GSecs1 = calendar:datetime_to_gregorian_seconds({{Y1,M1,D1},{H1,Min1,0}}),
   GSecs2 = calendar:datetime_to_gregorian_seconds({{Y2,M2,D2},{H2,Min2,0}}),
-  true = Cond(GSecs1, GSecs2),
-  case Stop(Next) of
-    true  -> ok;
-    false -> iterate(Next, Stop, Spec, Cond)
-  end.
+  RDiff = GSecs2 - GSecs1,
+  true = RDiff > (Diff-?skew) andalso RDiff < Diff+?skew,
+  do_iterate(PSpec, Diff, Next, N-1).
 
 next_test() ->
   lists:foreach(fun({Spec, Now, Expected}) ->
