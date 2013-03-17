@@ -31,10 +31,10 @@ parse_spec([_,_,_,_,_] = Spec) ->
   end.
 
 find_next(Spec, From) ->
-  [U|Us] = units(),
-  Nexts  = [[[{E,S}] || E <- next(U, S, fetch(U, From))] ||
-	     S <- fetch(U, Spec)],
-  find_next(Spec, From, Us, lists:append(Nexts)).
+  [{U,Ss,F}|R] = lists:zip3(units(), Spec, From),
+  find_next(R, From, lists:flatmap(fun(S) ->
+				       [[{E,S}] || E <- next(U, S, F)]
+				   end, Ss)).
 
 now() ->
   {{Y,M,D}, {Hr,Min,_Sec}} = calendar:local_time(),
@@ -95,13 +95,13 @@ try_all(_F, []) -> ok.
 %%         what is possible is decided by the next/3 function.
 %% Step 2. Filter out invalid dates and passed ones and pick the
 %%         smallest one.
-find_next(Spec, From, [U|Us], Dates) ->
-  Nexts = [[{E,S} || E <- next(U, S, fetch(U, From))] ||
-	    S <- fetch(U, Spec)],
-  find_next(Spec, From, Us, [[Next|Date] || Date <- Dates,
-					    Next <- lists:append(Nexts)]);
-
-find_next(_Spec, From, [], Alldates) ->
+find_next([{U,Ss,F}|R], From, Dates) ->
+  Nexts = lists:flatmap(fun(S) ->
+			    [[{E,S}] || E <- next(U, S, F)]
+			end, Ss),
+  find_next(R, From, [[Next|Date] || Date <- Dates,
+				     Next <- lists:append(Nexts)]);
+find_next([], From, Alldates) ->
   %% ?debug("alldates: ~p", [Alldates]),
   Fs = [ fun(Dates) -> reverse_order(Dates) end
        , fun(Dates) -> filter_invalid_ymd(Dates) end
@@ -118,18 +118,15 @@ reverse_order(Dates) ->
   lists:map(fun(Date) -> lists:reverse(Date) end, Dates).
 
 filter_invalid_ymd(Dates) ->
-  lists:filter(fun(Date) ->
-                   [{Y,_},{M,_},{D,_}] = fetch([year, month, day], Date),
+  lists:filter(fun([{Y,_},{M,_},{D,_},_,_]) ->
                    calendar:valid_date(Y, M, D)
                end, Dates).
 
 filter_invalid_day(Dates) ->
-  lists:filter(fun(Date) ->
-		   [{Y,_},{M,_},{D,Ds}] = fetch([year, month, day], Date),
-		   case erlang:is_atom(Ds) andalso Ds =/= '*' of
-		     true  -> Ds =:= day_of_the_week(Y,M,D);
-		     false -> true
-		   end
+  lists:filter(fun([{Y,_},{M,_},{D,Ds},_,_])
+		   when is_atom(Ds), Ds =/= '*' ->
+		   Ds =:= day_of_the_week(Y, M, D);
+		  (_) -> true
 	       end, Dates).
 
 untag(Dates) ->
@@ -241,7 +238,10 @@ tests() ->
   , {[2014, 9, 15,     '*', 20],  [2013, 11, 28, 12, 3], [2014,9,15,0,20]}
   , {['*',   2, '*',    0,   0 ], [2012, 2,  28, 0,  0], [2012, 2, 29, 0, 0]}
   , {['*',  '*', 30,  '*',  '*'],[2012, 4,  30, 0, 59], [2012, 4, 30, 1, 0]}
-  ].
+  , {[['*',
+       2010,
+       2012], '*', 12, '*', 10], [2012, 1, 1, 15, 45], [2012, 1, 12, 0, 10]}
+].
 
 -else.
 
