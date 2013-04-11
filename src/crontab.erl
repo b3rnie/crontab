@@ -14,23 +14,25 @@
 	, remove/2
         ]).
 
-%%%_* Includes =========================================================
--include_lib("crontab/include/crontab.hrl").
-
 %%%_* Code =============================================================
 %%%_ * API -------------------------------------------------------------
+-spec add(Name::atom(), Spec::list(), MFA::mfa()) -> ok | {error, _}.
 add(Name, Spec, MFA) ->
   add(Name, Spec, MFA, []).
 
+-spec add(Name::atom(), Spec::list(), MFA::mfa(), Options::list()) ->
+             ok | {error, _}.
 add(Name, Spec, MFA, Options) ->
   case crontab_time:parse_spec(Spec) of
     {ok, PSpec}  -> crontab_server:add(Name, PSpec, MFA, Options);
     {error, Rsn} -> {error, Rsn}
   end.
 
+-spec remove(Name::atom()) -> ok | {error, _}.
 remove(Name) ->
   remove(Name, []).
 
+-spec remove(Name::atom(), Options::list()) -> ok | {error, _}.
 remove(Name, Options) ->
   crontab_server:remove(Name, Options).
 
@@ -48,7 +50,7 @@ start_stop_test_() ->
       ok = crontab_test:waitfor(crontab)
   end.
 
-add_remove_test_() ->
+add_remove_test() ->
   crontab_test:with_crontab(
     fun() ->
 	Spec = ['*', '*', '*', '*', '*'],

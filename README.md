@@ -12,17 +12,17 @@ Execute scheduled functions.
 API is consists of scheduler:add/3 and scheduler:remove/1.
 
 <pre>
-  scheduler:add(Name::atom(), Spec::list(), MFA) -> ok | {error, Rsn}
+  scheduler:add(Name::atom(), Spec::list(), MFA::mfa()) -> ok | {error, Rsn}
   scheduler:remove(Name::atom()) -> ok | {error, Rsn}
 
-  Spec = [Year, Month, Day, Hour, Min]
+  Spec = [year(), month(), day(), hour(), min()]
 
-  Year  = 0..N  | '*' | [2013, 2015, ..]
-  Month = 1..12 | '*' | [1, 2, 3, ..]
-  Day   = 1..31 | monday | tuesday | wednesday | thursday | friday |
-          saturday | sunday | [monday, 21, friday, ..]
-  Hour  = 0..23 | '*' | [12, 22, ..]
-  Min   = 0..59 | '*' | [0, 15, 30, 45, ..]
+  year()  :: 0..N  | '*' | [2013, 2015, ..]
+  month() :: 1..12 | '*' | [1, 2, 3, ..]
+  day()   :: 1..31 | monday | tuesday | wednesday | thursday | friday |
+             saturday | sunday | [monday, 21, friday, ..]
+  hour()  :: 0..23 | '*' | [12, 22, ..]
+  min()   :: 0..59 | '*' | [0, 15, 30, 45, ..]
 
   MFA = {module, function, args}
 </pre>
