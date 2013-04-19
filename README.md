@@ -12,8 +12,8 @@ Execute scheduled functions.
 API is consists of scheduler:add/3 and scheduler:remove/1.
 
 <pre>
-  scheduler:add(Name::atom(), Spec::list(), MFA::mfa()) -> ok | {error, Rsn}
-  scheduler:remove(Name::atom()) -> ok | {error, Rsn}
+  crontab:add(Name::atom(), Spec::list(), MFA::mfa()) -> ok | {error, Rsn}
+  crontab:remove(Name::atom()) -> ok | {error, Rsn}
 
   Spec = [year(), month(), day(), hour(), min()]
 
@@ -34,13 +34,13 @@ Example usage:
   MFA = {module, function, []},
 
   %% once/week, monday 8.30
-  ok = scheduler:add(foo, ['*', '*', monday,  8, 30], MFA),
+  ok = crontab:add(foo, ['*', '*', monday,  8, 30], MFA),
   %% first day of month, 00.00
-  ok = scheduler:add(bar, ['*', '*', 1, 0, 0], MFA),
+  ok = crontab:add(bar, ['*', '*', 1, 0, 0], MFA),
   %% 29th of february, 20.00
-  ok = scheduler:add(baz, ['*', 2, 29, 20, 0], MFA),
+  ok = crontab:add(baz, ['*', 2, 29, 20, 0], MFA),
   %% every 15 minute on mondays and fridays
-  ok = scheduler:add(buz, ['*', '*', [monday, friday], '*', [0, 15, 30, 45]], MFA),
+  ok = crontab:add(buz, ['*', '*', [monday, friday], '*', [0, 15, 30, 45]], MFA),
   ok = application:stop(crontab),
 </pre>
 
