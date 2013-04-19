@@ -204,7 +204,7 @@ empty_tick_test_() ->
 		      timer:sleep(5000)
 		  end)}.
 
-unable_to_schedule_test_() ->
+unable_to_schedule_test() ->
   crontab_test:with_crontab(
     fun() ->
 	Spec = crontab_time:now(),
