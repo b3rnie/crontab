@@ -14,25 +14,29 @@
 	, remove/2
         ]).
 
+%%%_* Includes =========================================================
+-include_lib("stdlib2/include/prelude.hrl").
+
 %%%_* Code =============================================================
 %%%_ * API -------------------------------------------------------------
--spec add(Name::atom(), Spec::list(), MFA::mfa()) -> ok | {error, _}.
+-spec add(Name::atom(), Spec::list(), MFA::mfa()) ->
+             whynot(task_exists | no_next_found).
 add(Name, Spec, MFA) ->
   add(Name, Spec, MFA, []).
 
 -spec add(Name::atom(), Spec::list(), MFA::mfa(), Options::list()) ->
-             ok | {error, _}.
+             whynot(task_exists | no_next_found).
 add(Name, Spec, MFA, Options) ->
   case crontab_time:parse_spec(Spec) of
     {ok, PSpec}  -> crontab_server:add(Name, PSpec, MFA, Options);
     {error, Rsn} -> {error, Rsn}
   end.
 
--spec remove(Name::atom()) -> ok | {error, _}.
+-spec remove(Name::atom()) -> whynot(no_such_task).
 remove(Name) ->
   remove(Name, []).
 
--spec remove(Name::atom(), Options::list()) -> ok | {error, _}.
+-spec remove(Name::atom(), Options::list()) -> whynot(no_such_task).
 remove(Name, Options) ->
   crontab_server:remove(Name, Options).
 
@@ -68,7 +72,8 @@ run_test_() ->
   F = fun() ->
 	  Daddy = erlang:self(),
 	  Ref   = erlang:make_ref(),
-	  MFA   = {crontab_test, execute_funs, [[fun() -> Daddy ! Ref end]]},
+          Fs    = [fun() -> Daddy ! Ref end],
+	  MFA   = {crontab_test, execute_funs, [Fs]},
 	  ok    = crontab:add(foo, ['*', '*', '*', '*', '*'], MFA),
 	  receive Ref -> ok end
       end,
