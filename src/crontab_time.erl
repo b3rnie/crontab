@@ -96,6 +96,8 @@ try_all(_F, []) -> ok.
 %% Step 2. Filter out invalid dates and passed ones and pick the
 %%         smallest one.
 find_next([{U,Ss,F}|R], From, Dates) ->
+  %% TODO: To improve performance and limit size of search duplicates
+  %% should be filtered out after each unit
   Nexts = lists:flatmap(fun(S) ->
 			    [[{E,S}] || E <- next(U, S, F)]
 			end, Ss),
@@ -158,13 +160,6 @@ next(minute, '*', 59) -> [0];
 next(minute, '*', M ) -> [0, M+1];
 next(minute, M,   _ ) -> [M].
 
-fetch(year,   [Y,_,_,_,_]       ) -> Y;
-fetch(month,  [_,M,_,_,_]       ) -> M;
-fetch(day,    [_,_,D,_,_]       ) -> D;
-fetch(hour,   [_,_,_,H,_]       ) -> H;
-fetch(minute, [_,_,_,_,M]       ) -> M;
-fetch(Us,     [_,_,_,_,_] = Spec) -> [fetch(U, Spec) || U <- Us].
-
 units() -> [year, month, day, hour, minute].
 
 day_of_the_week(Y, M, D) ->
@@ -184,6 +179,17 @@ day_of_the_week(7) -> sunday.
 -include_lib("eunit/include/eunit.hrl").
 
 -define(skew, 10).
+
+every_15m_test() ->
+  Spec = ['*', '*', '*', '*', [0, 15, 30, 45]],
+  Diff = 3600 div 4,
+  iterate(Spec, Diff).
+
+every_hour_test() ->
+  Spec = ['*', '*', '*', '*', 0],
+  Diff = 3600,
+  iterate(Spec, Diff).
+
 every_day_test() ->
   Spec = ['*', '*', '*', 0, 0],
   Diff = 86400,
@@ -199,16 +205,6 @@ every_week_test_() ->
 		     end, lists:seq(1, 7))
    end}.
 
-every_15m_test() ->
-  Spec = ['*', '*', '*', '*', [0, 15, 30, 45]],
-  Diff = 3600 div 4,
-  iterate(Spec, Diff).
-
-every_hour_test() ->
-  Spec = ['*', '*', '*', '*', 0],
-  Diff = 3600,
-  iterate(Spec, Diff).
-
 -define(steps, 500).
 iterate(Spec, Diff) ->
   {ok, PSpec} = parse_spec(Spec),
@@ -218,29 +214,45 @@ iterate(Spec, Diff) ->
 do_iterate(_, _, _, 0) -> ok;
 do_iterate(PSpec, Diff, [Y1,M1,D1,H1,Min1] = Prev, N) ->
   {ok, [Y2,M2,D2,H2,Min2]=Next} = find_next(PSpec, Prev),
-  GSecs1 = calendar:datetime_to_gregorian_seconds({{Y1,M1,D1},{H1,Min1,0}}),
-  GSecs2 = calendar:datetime_to_gregorian_seconds({{Y2,M2,D2},{H2,Min2,0}}),
+  Date1 = {{Y1,M1,D1}, {H1, Min1, 0}},
+  Date2 = {{Y2,M2,D2}, {H2, Min2, 0}},
+  GSecs1 = calendar:datetime_to_gregorian_seconds(Date1),
+  GSecs2 = calendar:datetime_to_gregorian_seconds(Date2),
   RDiff = GSecs2 - GSecs1,
-  true = RDiff > (Diff-?skew) andalso RDiff < Diff+?skew,
+  ?assert(RDiff > Diff-?skew),
+  ?assert(RDiff < Diff+?skew),
   do_iterate(PSpec, Diff, Next, N-1).
 
-next_test() ->
+specific_dates_test() ->
   lists:foreach(fun({Spec, Now, Expected}) ->
                     {ok, PSpec} = parse_spec(Spec),
                     ?assertEqual({ok, Expected}, find_next(PSpec, Now))
-                end, tests()),
-  ok.
+                end, specific_dates_data()).
 
-tests() ->
-  %% {Spec, Now, Expected}
-  [ {['*',  2, 29,     20,  0 ],  [2012, 3,  1,0,0],  [2016,2,29,20,0]}
-  , {['*',  1, friday, 0,   0 ],  [2012, 1,  1,1,43], [2012,1,6,0,0]}
-  , {[2014, 9, 15,     '*', 20],  [2013, 11, 28, 12, 3], [2014,9,15,0,20]}
-  , {['*',   2, '*',    0,   0 ], [2012, 2,  28, 0,  0], [2012, 2, 29, 0, 0]}
-  , {['*',  '*', 30,  '*',  '*'],[2012, 4,  30, 0, 59], [2012, 4, 30, 1, 0]}
-  , {[['*',
-       2010,
-       2012], '*', 12, '*', 10], [2012, 1, 1, 15, 45], [2012, 1, 12, 0, 10]}
+specific_dates_data() ->
+  [ {['*',               2,   29,     20,  0],
+     [2012,              3,   1,      0,   0],
+     [2016,              2,   29,     20,  0]
+    }
+  , {['*',               1,   friday, 0,   0],
+     [2012,              1,   1,      1,   43],
+     [2012,              1,   6,      0,   0]
+    }
+  , {[2014,              9,   15,     '*', 20],
+     [2013,              11,  28,     12,  3],
+     [2014,              9,   15,     0,   20]
+    }
+  , {['*',               2,   '*',    0,   0],
+     [2012,              2,   28,     0,   0],
+     [2012,              2,   29,     0,   0]
+    }
+  , {['*',               '*', 30,     '*', '*'],
+     [2012,              4,   30,     0,   59],
+     [2012,              4,   30,     1,   0]}
+  , {[['*', 2010, 2012], '*', 12,     '*', 10],
+     [2012,              1,   1,      15,  45],
+     [2012,              1,   12,     0,   10]
+    }
 ].
 
 -else.
