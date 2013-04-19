@@ -44,15 +44,13 @@ remove(Name, Options) ->
 -ifdef(TEST).
 -include_lib("eunit/include/eunit.hrl").
 
-start_stop_test_() ->
-  fun() ->
-      ok = application:start(crontab),
-      ok = application:stop(crontab),
-      ok = crontab_test:waitfor(crontab),
-      ok = application:start(crontab),
-      ok = application:stop(crontab),
-      ok = crontab_test:waitfor(crontab)
-  end.
+start_stop_test() ->
+  ok = application:start(crontab),
+  ok = application:stop(crontab),
+  ok = crontab_test:waitfor(crontab),
+  ok = application:start(crontab),
+  ok = application:stop(crontab),
+  ok = crontab_test:waitfor(crontab).
 
 add_remove_test() ->
   crontab_test:with_crontab(
@@ -68,6 +66,13 @@ add_remove_test() ->
 	{error, no_such_task} = crontab:remove(bar)
     end).
 
+add_bad_spec_test() ->
+  crontab_test:with_crontab(
+    fun() ->
+        Spec = ['*', '*', blah, '*', '*'],
+        {error, day} = crontab:add(foo, Spec, {foo, bar, []})
+    end).
+
 run_test_() ->
   F = fun() ->
 	  Daddy = erlang:self(),
@@ -77,7 +82,7 @@ run_test_() ->
 	  ok    = crontab:add(foo, ['*', '*', '*', '*', '*'], MFA),
 	  receive Ref -> ok end
       end,
-  {timeout, 120, crontab_test:with_crontab(F)}.
+  {timeout, 120, fun() -> crontab_test:with_crontab(F) end}.
 
 -else.
 -endif.

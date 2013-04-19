@@ -67,7 +67,7 @@ terminate(Rsn, S) ->
 		end, dict:to_list(S#s.p2n)).
 
 handle_call({add, {Name, Spec, MFA, Options}}, _From, S) ->
-  case do_add(Name, Spec, MFA, Options, S#s.tasks, S#s.queue) of
+  case do_add(Name, Spec, MFA, Options, S#s.tasks, S#s.queue, S#s.n2p) of
     {ok, {Tasks, Queue}} ->
       {reply, ok, S#s{tasks=Tasks, queue=Queue}};
     {error, Rsn} ->
@@ -110,8 +110,8 @@ code_change(_OldVsn, S, _Extra) ->
   {ok, S}.
 
 %%%_ * Internals -------------------------------------------------------
-do_add(Name, Spec, MFA, Options, Tasks, Queue) ->
-  case gb_trees:is_defined(Name, Tasks) of
+do_add(Name, Spec, MFA, Options, Tasks, Queue, N2P) ->
+  case gb_trees:is_defined(Name, Tasks) orelse dict:is_key(Name, N2P) of
     true  -> {error, task_exists};
     false ->
       case crontab_time:find_next(Spec, crontab_time:now()) of
@@ -139,13 +139,13 @@ do_remove(Name, Options, Tasks, Queue, P2N0, N2P0) ->
   end.
 
 maybe_stop(Name, Options, P2N, N2P) ->
-  case proplists:get_value(stop_on_remove, Options, true) of
+  case s2_lists:assoc(Options, stop_on_remove, true) of
     true  ->
       case dict:find(Name, N2P) of
         {ok, Pid} ->
           ?info("~p stopping", [Name]),
           exit(Pid, removing),
-          {dict:erase(Pid, P2N),dict:erase(Name, N2P)};
+          {P2N, N2P};
         error ->
           {P2N, N2P}
       end;
@@ -199,10 +199,8 @@ try_schedule(Name, Task, Tasks0, Queue0) ->
 -include_lib("eunit/include/eunit.hrl").
 
 empty_tick_test_() ->
-  {timeout, 10, crontab_test:with_crontab(
-		  fun() ->
-		      timer:sleep(5000)
-		  end)}.
+  F = fun() -> timer:sleep(5000) end,
+  {timeout, 10, fun() -> crontab_test:with_crontab(F) end}.
 
 unable_to_schedule_test() ->
   crontab_test:with_crontab(
@@ -211,6 +209,40 @@ unable_to_schedule_test() ->
 	{error, no_next_found} =
 	  crontab:add(foo, Spec, {crontab_test, execute_funs,
 				  [[fun() -> exit(fail) end]]})
+    end).
+
+stop_running_task_test_() ->
+  {timeout, 120,
+   fun() ->
+       crontab_test:with_crontab(
+         fun() ->
+             Daddy = self(),
+             Ref   = make_ref(),
+             Spec  = ['*', '*', '*', '*', '*'],
+             Fs    = [fun() ->
+                          Daddy ! {Ref, self()},
+                          timer:sleep(5000)
+                      end],
+             MFA   = {crontab_test, execute_funs, [Fs]},
+             ok    = crontab:add(foo, Spec, MFA),
+             Pid2  = receive {Ref, Pid} -> Pid end,
+             Ref2  = erlang:monitor(process, Pid2),
+             ok    = crontab:remove(foo, [{stop_on_remove, true}]),
+             receive {'DOWN', Ref2, process, Pid2, Rsn} ->
+                 ?assert(Rsn =:= removing)
+             end,
+             timer:sleep(1000),
+             ok = crontab:add(foo, Spec, MFA)
+         end)
+   end}.
+
+cover_test() ->
+  crontab_test:with_crontab(
+    fun() ->
+        crontab_server ! foo,
+        ok = sys:suspend(crontab_server),
+        ok = sys:change_code(crontab_server, crontab_server, 0, []),
+        ok = sys:resume(crontab_server)
     end).
 
 -else.

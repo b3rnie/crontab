@@ -14,7 +14,6 @@
 	]).
 
 %%%_* Includes =========================================================
--include_lib("crontab/include/crontab.hrl").
 
 %%%_* Macros ===========================================================
 %%%_* Code =============================================================
@@ -24,12 +23,11 @@ execute_funs(Fs) ->
   lists:foreach(fun(F) -> F() end, Fs).
 
 with_crontab(F) ->
-  fun() ->
-      start_app(crontab),
-      try F()
-      after
-	stop_app(crontab)
-      end
+  try
+    start_app(crontab),
+    F()
+  after
+    stop_app(crontab)
   end.
 
 waitfor(App) ->

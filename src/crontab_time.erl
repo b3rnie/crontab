@@ -13,7 +13,6 @@
 -export([ parse_spec/1
         , find_next/2
         , now/0
-        , max/1
         ]).
 
 %%%_* Includes =========================================================
@@ -39,9 +38,6 @@ find_next(Spec, From) ->
 now() ->
   {{Y,M,D}, {Hr,Min,_Sec}} = calendar:local_time(),
   [Y, M, D, Hr, Min].
-
-max(L) ->
-  lists:max(L).
 
 %%%_ * Internal spec validate/parse ------------------------------------
 expand_terms(Spec) ->
@@ -179,7 +175,6 @@ day_of_the_week(7) -> sunday.
 -include_lib("eunit/include/eunit.hrl").
 
 -define(skew, 10).
-
 every_15m_test() ->
   Spec = ['*', '*', '*', '*', [0, 15, 30, 45]],
   Diff = 3600 div 4,
@@ -253,10 +248,16 @@ specific_dates_data() ->
      [2012,              1,   1,      15,  45],
      [2012,              1,   12,     0,   10]
     }
-].
+  ].
+
+parse_spec_fail_test() ->
+  {error, year}   = parse_spec([foo, 2,  3,       4,  5]),
+  {error, month}  = parse_spec([1,   13, 3,       4,  5]),
+  {error, day}    = parse_spec([1,   2,  [blorg], 4,  5]),
+  {error, hour}   = parse_spec([1,   2,  3,       24, 5]),
+  {error, minute} = parse_spec([1,   2,  3,       4,  60]).
 
 -else.
-
 -endif.
 
 %%%_* Emacs ============================================================
