@@ -6,7 +6,6 @@
 
 %%%_* Module declaration ===============================================
 -module(crontab_time).
--compile(export_all).
 -compile({no_auto_import, [now/0]}).
 
 %%%_* Exports ==========================================================
