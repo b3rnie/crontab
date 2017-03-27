@@ -9,9 +9,9 @@
 
 %%%_* Exports ==========================================================
 -export([ add/3
-	, add/4
+        , add/4
         , remove/1
-	, remove/2
+        , remove/2
         ]).
 
 %%%_* Includes =========================================================
@@ -19,12 +19,12 @@
 
 %%%_* Code =============================================================
 %%%_ * API -------------------------------------------------------------
--spec add(Name::atom(), Spec::list(), MFA::mfa()) ->
+-spec add(atom(), list(), {module(), atom(), list(term())}) ->
              whynot(task_exists | no_next_found).
 add(Name, Spec, MFA) ->
   add(Name, Spec, MFA, []).
 
--spec add(Name::atom(), Spec::list(), MFA::mfa(), Options::list()) ->
+-spec add(atom(), list(), {module(), atom(), list(term())}, list()) ->
              whynot(task_exists | no_next_found).
 add(Name, Spec, MFA, Options) ->
   case crontab_time:parse_spec(Spec) of
@@ -32,11 +32,11 @@ add(Name, Spec, MFA, Options) ->
     {error, Rsn} -> {error, Rsn}
   end.
 
--spec remove(Name::atom()) -> whynot(no_such_task).
+-spec remove(atom()) -> whynot(no_such_task).
 remove(Name) ->
   remove(Name, []).
 
--spec remove(Name::atom(), Options::list()) -> whynot(no_such_task).
+-spec remove(atom(), list()) -> whynot(no_such_task).
 remove(Name, Options) ->
   crontab_server:remove(Name, Options).
 
@@ -55,15 +55,15 @@ start_stop_test() ->
 add_remove_test() ->
   crontab_test:with_crontab(
     fun() ->
-	Spec = ['*', '*', '*', '*', '*'],
-	MFA  = {crontab_test, execute_funs, [[]]},
-	ok   = crontab:add(foo, Spec, MFA),
-	ok   = crontab:add(bar, Spec, MFA),
-	{error, task_exists} = crontab:add(foo, Spec, MFA),
-	ok   = crontab:remove(foo),
-	ok   = crontab:remove(bar),
-	{error, no_such_task} = crontab:remove(foo),
-	{error, no_such_task} = crontab:remove(bar)
+      Spec = ['*', '*', '*', '*', '*'],
+      MFA  = {crontab_test, execute_funs, [[]]},
+      ok   = crontab:add(foo, Spec, MFA),
+      ok   = crontab:add(bar, Spec, MFA),
+      {error, task_exists} = crontab:add(foo, Spec, MFA),
+      ok   = crontab:remove(foo),
+      ok   = crontab:remove(bar),
+      {error, no_such_task} = crontab:remove(foo),
+      {error, no_such_task} = crontab:remove(bar)
     end).
 
 add_bad_spec_test() ->
@@ -75,12 +75,12 @@ add_bad_spec_test() ->
 
 run_test_() ->
   F = fun() ->
-	  Daddy = erlang:self(),
-	  Ref   = erlang:make_ref(),
+      Daddy = erlang:self(),
+      Ref   = erlang:make_ref(),
           Fs    = [fun() -> Daddy ! Ref end],
-	  MFA   = {crontab_test, execute_funs, [Fs]},
-	  ok    = crontab:add(foo, ['*', '*', '*', '*', '*'], MFA),
-	  receive Ref -> ok end
+      MFA   = {crontab_test, execute_funs, [Fs]},
+      ok    = crontab:add(foo, ['*', '*', '*', '*', '*'], MFA),
+      receive Ref -> ok end
       end,
   {timeout, 120, fun() -> crontab_test:with_crontab(F) end}.
 
