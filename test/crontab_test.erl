@@ -9,10 +9,14 @@
 
 %%%_* Exports ==========================================================
 -export([ execute_funs/1
-	, with_crontab/1
-	, waitfor/1
-	]).
+        , waitfor/1
+        , with_crontab/1
+        ]).
 
+-ignore_xref([ execute_funs/1
+             , waitfor/1
+             , with_crontab/1
+             ]).
 %%%_* Includes =========================================================
 
 %%%_* Macros ===========================================================

@@ -1,25 +1,25 @@
 suite=$(if $(SUITE), suite=$(SUITE), )
 
-.PHONY:	all deps check test clean
+.PHONY:	all
 
-all: deps
-	./rebar compile
+all: compile test xref dialyze
 
-deps:
-	./rebar get-deps
-
-docs:
-	./rebar doc
-
-check:
-	./rebar check-plt
-	./rebar dialyze
+compile:
+	rebar3 compile
 
 test:
-	./rebar eunit $(suite) skip_deps=true
+	rebar3 eunit $(suite) skip_deps=true
+
+xref:
+	rebar3 xref
+
+dialyze:
+	rebar3 dialyzer
+
+docs:
+	rebar3 edoc
 
 clean:
-	./rebar clean
+	rebar3 clean
 	$(RM) doc/*
-
-# eof
+	$(RM) -rf _build/

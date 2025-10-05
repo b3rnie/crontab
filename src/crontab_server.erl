@@ -10,8 +10,8 @@
 
 %%%_* Exports ==========================================================
 -export([ start_link/1
-	, add/4
-	, remove/2
+        , add/4
+	    , remove/2
         ]).
 
 %% gen_server
@@ -23,8 +23,10 @@
         , code_change/3
         ]).
 
+-ignore_xref([start_link/1]).
+
 %%%_* Includes =========================================================
--include_lib("stdlib2/include/prelude.hrl").
+-include_lib("kernel/include/logger.hrl").
 
 %%%_* Macros ===========================================================
 -define(tick, 1000).
@@ -34,7 +36,7 @@
 -record(s, { tasks = gb_trees:empty() %% name -> task
            , queue = gb_trees:empty() %% time -> name
            , p2n   = dict:new()
-	   , n2p   = dict:new()
+	       , n2p   = dict:new()
            , tref
            }).
 
@@ -96,14 +98,14 @@ handle_info(tick, S) ->
 handle_info({'EXIT', Pid, Rsn}, S) ->
   Name = dict:fetch(Pid, S#s.p2n),
   case Rsn of
-    normal -> ?info("~p done", [Name]);
-    _      -> ?critical("~p crashed: ~p", [Name, Rsn])
+    normal -> ?LOG_INFO("~p done", [Name]);
+    _      -> ?LOG_CRITICAL("~p crashed: ~p", [Name, Rsn])
   end,
   {noreply, S#s{ p2n = dict:erase(Pid, S#s.p2n)
-	       , n2p = dict:erase(Name, S#s.n2p)
-	       }};
+	           , n2p = dict:erase(Name, S#s.n2p)
+	           }};
 handle_info(Msg, S) ->
-  ?warning("~p", [Msg]),
+  ?LOG_WARNING("~p", [Msg]),
   {noreply, S}.
 
 code_change(_OldVsn, S, _Extra) ->
@@ -139,11 +141,12 @@ do_remove(Name, Options, Tasks, Queue, P2N0, N2P0) ->
   end.
 
 maybe_stop(Name, Options, P2N, N2P) ->
-  case s2_lists:assoc(Options, stop_on_remove, true) of
+  case proplists:get_value(stop_on_remove, Options, true) of
     true  ->
       case dict:find(Name, N2P) of
         {ok, Pid} ->
-          ?info("~p stopping", [Name]),
+          %% TODO: add a testcase for this case
+          ?LOG_INFO("~p stopping", [Name]),
           exit(Pid, removing),
           {P2N, N2P};
         error ->
@@ -164,7 +167,7 @@ do_tick(Tasks0, Queue0, P2N0, N2P0) ->
              {P2N, N2P}     = try_start(Name, Task, P2N0, N2P0),
              {Tasks, Queue} = try_schedule(Name, Task, Tasks0, Queue1),
              do_tick(Tasks, Queue, P2N, N2P);
-           {{_Time, _Name}, _Name, _Queue} ->
+           {{_Time, Name0}, Name1, _Queue} when Name0 =:= Name1 ->
              {Tasks0, Queue0, P2N0, N2P0}
          end
   end.
@@ -173,10 +176,10 @@ try_start(Name, Task, P2N, N2P) ->
   %% TODO: figure out what to do with overlapping tasks
   case dict:is_key(Name, N2P) of
     true ->
-      ?warning("~p is running, not starting", [Name]),
+      ?LOG_WARNING("~p is running, not starting", [Name]),
       {P2N, N2P};
     false ->
-      ?info("~p starting", [Name]),
+      ?LOG_INFO("~p starting", [Name]),
       {M,F,A} = Task#task.mfa,
       Pid = erlang:spawn_link(M, F, A),
       {dict:store(Pid, Name, P2N),
@@ -186,11 +189,11 @@ try_start(Name, Task, P2N, N2P) ->
 try_schedule(Name, Task, Tasks0, Queue0) ->
   case crontab_time:find_next(Task#task.spec, Task#task.next) of
     {ok, Time} ->
-      ?info("~p next start: ~p", [Name, Time]),
+      ?LOG_INFO("~p next start: ~p", [Name, Time]),
       {gb_trees:update(Name, Task#task{next=Time}, Tasks0),
        gb_trees:insert({Time, Name}, Name, Queue0)};
     {error, Rsn} ->
-      ?info("~p unable to find next start: ~p", [Name, Rsn]),
+      ?LOG_INFO("~p unable to find next start: ~p", [Name, Rsn]),
       {gb_trees:update(Name, Task#task{next=undefined}, Tasks0), Queue0}
   end.
 
